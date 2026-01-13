@@ -47,6 +47,9 @@ prisma/*.db-*
 # docker volume
 docker-data/
 
+# Claude artifacts
+claude.rd
+
 # vercel
 .vercel
 
