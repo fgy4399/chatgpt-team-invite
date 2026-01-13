@@ -44,6 +44,9 @@ yarn-error.log*
 prisma/*.db
 prisma/*.db-*
 
+# docker volume
+docker-data/
+
 # vercel
 .vercel
 

@@ -30,6 +30,25 @@
 - 构建：`npm run build`（默认使用 Turbopack）
 - 如遇到 Turbopack 兼容问题：`npm run build -- --webpack`
 
+## Docker 部署
+
+使用 SQLite（推荐开发/小规模自建）：
+
+```bash
+docker compose up -d --build
+```
+
+- 默认监听：`http://localhost:3000`
+- 默认使用持久化 SQLite：`./docker-data/app.db`（容器内路径 `/data/app.db`）
+
+首次运行前请修改 `docker-compose.yml` 里的 `JWT_SECRET` / `ADMIN_PASSWORD` 等敏感配置，或改用 `env_file` 注入环境变量。
+
+仅运行迁移（可选）：
+
+```bash
+docker compose run --rm app npx --no-install prisma migrate deploy
+```
+
 ## 安全提示
 
 - 生产环境务必设置强随机的 `JWT_SECRET`（建议长度 ≥ 32）

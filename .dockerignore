@@ -1,0 +1,23 @@
+.git
+.next
+node_modules
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.DS_Store
+
+# local env (use docker env vars / compose env_file instead)
+.env
+.env.*
+!.env.example
+
+# local db / artifacts
+*.db
+*.db-*
+prisma/*.db
+prisma/*.db-*
+.dev.log
+.dev.pid
+
+# local data volume
+docker-data

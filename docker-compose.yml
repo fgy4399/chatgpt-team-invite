@@ -1,0 +1,24 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      # 默认使用容器内持久化 SQLite（挂载到 ./docker-data）
+      DATABASE_URL: "file:/data/app.db"
+      RUN_MIGRATIONS: "1"
+      # 生产环境务必改为强随机值
+      JWT_SECRET: "change-me"
+      # 仅用于首次初始化管理员（数据库里还没有任何 Admin 时生效）
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "change-me"
+      # 单团队模式（可选，后台未配置 Team 时使用）
+      CHATGPT_ACCESS_TOKEN: ""
+      CHATGPT_ACCOUNT_ID: ""
+      CHATGPT_COOKIES: ""
+    volumes:
+      - ./docker-data:/data
