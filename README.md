@@ -1,36 +1,36 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ChatGPT Team 邀请码管理系统
 
-## Getting Started
+一个用于管理和分发 ChatGPT Team 邀请的 Web 应用。用户通过邀请码提交邮箱后，系统自动调用 ChatGPT Team API 发送团队邀请，并提供状态页查询。
 
-First, run the development server:
+## 功能
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- 管理员登录、生成/撤销邀请码
+- 多团队账号管理（优先级、名额上限、成员数同步）
+- 用户邀请码 + 邮箱申请邀请
+- 邀请状态查询（成功/失败/处理中）
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 本地开发
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. 复制并填写环境变量：`cp .env.example .env`
+2. 安装依赖：`npm install`
+3. 初始化/迁移数据库：`npx prisma migrate dev`
+4. 启动开发服务器：`npm run dev`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+访问：
+- 用户页：`/`
+- 管理后台：`/admin`
 
-## Learn More
+## 数据库
 
-To learn more about Next.js, take a look at the following resources:
+- 默认本地 SQLite：`prisma/dev.db`（无需额外配置）
+- 生产环境建议使用 Turso/libsql：配置 `DATABASE_URL` 与 `DATABASE_AUTH_TOKEN`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 构建与部署
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- 构建：`npm run build`（默认使用 Turbopack）
+- 如遇到 Turbopack 兼容问题：`npm run build -- --webpack`
 
-## Deploy on Vercel
+## 安全提示
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- 生产环境务必设置强随机的 `JWT_SECRET`（建议长度 ≥ 32）
+- `ADMIN_USERNAME` / `ADMIN_PASSWORD` 仅用于“首次初始化管理员账号”（数据库中没有任何 Admin 时生效）

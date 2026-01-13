@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum InviteCodeStatus {
+  PENDING
+  USED
+  EXPIRED
+  REVOKED
+}
+
+enum InvitationStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+model Admin {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  lastLoginAt  DateTime?
+  inviteCodes  InviteCode[]
+}
+
+model Team {
+  id             String   @id @default(uuid())
+  name           String
+  accountId      String   @unique
+  accessToken    String
+  cookies        String?
+  maxMembers     Int      @default(0) // 0 = unlimited
+  currentMembers Int      @default(0)
+  isActive       Boolean  @default(true)
+  priority       Int      @default(0) // lower = higher priority
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  invitations    Invitation[]
+
+  @@index([isActive, priority])
+}
+
+model InviteCode {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  status      InviteCodeStatus @default(PENDING)
+  note        String?
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime?
+  usedAt      DateTime?
+
+  createdBy   Admin?   @relation(fields: [createdById], references: [id])
+  createdById String?
+
+  invitation  Invitation?
+
+  @@index([code])
+  @@index([status])
+}
+
+model Invitation {
+  id           String   @id @default(uuid())
+  email        String
+  status       InvitationStatus @default(PENDING)
+  errorMessage String?
+  createdAt    DateTime @default(now())
+  processedAt  DateTime?
+
+  inviteCode   InviteCode @relation(fields: [inviteCodeId], references: [id])
+  inviteCodeId String     @unique
+
+  team         Team?    @relation(fields: [teamId], references: [id])
+  teamId       String?
+
+  @@index([status])
+  @@index([email])
+  @@index([teamId])
+}
+
+model SystemConfig {
+  key       String   @id
+  value     String
+  updatedAt DateTime @default(now()) @updatedAt
+}
