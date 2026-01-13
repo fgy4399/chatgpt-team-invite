@@ -9,6 +9,10 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ pkg-config \
   && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
+# `npm ci` 会触发项目的 `postinstall`（执行 `prisma generate`），需要先提供 schema/config。
+COPY prisma/schema.prisma ./prisma/schema.prisma
+COPY prisma.config.ts ./
+RUN mkdir -p src/generated
 RUN npm ci
 
 FROM base AS builder
