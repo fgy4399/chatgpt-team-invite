@@ -96,6 +96,4 @@ docker compose run --rm app npx --no-install prisma migrate deploy
 
 ## 许可证（License）
 
-当前仓库尚未添加开源许可证文件（GitHub 会显示 “No license”），默认按版权法“保留所有权利（All rights reserved）”处理。
-
-如需开源，请在仓库根目录添加 `LICENSE`（常见如 MIT / Apache-2.0 / GPL-3.0）并在此处注明；需要我帮你生成哪一种告诉我即可。
+本项目采用 MIT License 开源，详见 `LICENSE`。
