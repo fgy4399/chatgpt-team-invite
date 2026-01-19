@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -17,6 +17,14 @@ interface Team {
   _count: {
     invitations: number;
   };
+}
+
+interface TeamMember {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  createdAt: string;
 }
 
 interface NewTeam {
@@ -55,7 +63,89 @@ export default function TeamsPage() {
   });
   const [editingTeam, setEditingTeam] = useState<EditTeam | null>(null);
 
+  const [membersModalOpen, setMembersModalOpen] = useState(false);
+  const [membersModalTeam, setMembersModalTeam] = useState<Team | null>(null);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState("");
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [membersTotal, setMembersTotal] = useState<number | null>(null);
+  const membersFetchControllerRef = useRef<AbortController | null>(null);
+
   const getToken = () => localStorage.getItem("admin_token");
+
+  const closeMembersModal = () => {
+    membersFetchControllerRef.current?.abort();
+    membersFetchControllerRef.current = null;
+    setMembersModalOpen(false);
+    setMembersModalTeam(null);
+    setMembersLoading(false);
+    setMembersError("");
+    setMembers([]);
+    setMembersTotal(null);
+  };
+
+  const fetchTeamMembers = useCallback(async (team: Team) => {
+    const token = getToken();
+    if (!token) {
+      router.push("/admin");
+      return;
+    }
+
+    membersFetchControllerRef.current?.abort();
+    const controller = new AbortController();
+    membersFetchControllerRef.current = controller;
+
+    setMembersLoading(true);
+    setMembersError("");
+    setMembers([]);
+    setMembersTotal(null);
+
+    try {
+      const res = await fetch(`/api/admin/teams/${team.id}/members`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+
+      if (res.status === 401) {
+        localStorage.removeItem("admin_token");
+        router.push("/admin");
+        return;
+      }
+
+      type TeamMembersApiResponse = {
+        members?: TeamMember[];
+        total?: number;
+        error?: string;
+      };
+
+      const data = (await res
+        .json()
+        .catch(() => ({}))) as Partial<TeamMembersApiResponse>;
+
+      if (membersFetchControllerRef.current !== controller) {
+        return;
+      }
+
+      if (res.ok) {
+        const list = Array.isArray(data.members) ? (data.members as TeamMember[]) : [];
+        setMembers(list);
+        setMembersTotal(
+          typeof data.total === "number" ? data.total : list.length
+        );
+      } else {
+        setMembersError(data.error || "获取成员列表失败");
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      setMembersError("获取成员列表失败，请稍后重试");
+    } finally {
+      if (membersFetchControllerRef.current === controller) {
+        setMembersLoading(false);
+      }
+    }
+  }, [router]);
 
   const fetchTeams = useCallback(async () => {
     const token = getToken();
@@ -244,6 +334,12 @@ export default function TeamsPage() {
     } catch (error) {
       console.error("Failed to delete team:", error);
     }
+  };
+
+  const handleViewMembers = async (team: Team) => {
+    setMembersModalTeam(team);
+    setMembersModalOpen(true);
+    await fetchTeamMembers(team);
   };
 
   const getCapacityBadge = (team: Team) => {
@@ -590,6 +686,12 @@ export default function TeamsPage() {
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <button
+                          onClick={() => handleViewMembers(team)}
+                          className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                        >
+                          查看成员
+                        </button>
+                        <button
                           onClick={() => handleStartEdit(team)}
                           className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                         >
@@ -629,6 +731,129 @@ export default function TeamsPage() {
           </ul>
         </div>
       </main>
+
+      {/* Members Modal */}
+      {membersModalOpen && membersModalTeam && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={closeMembersModal}
+          />
+          <div className="relative w-full max-w-5xl bg-white dark:bg-zinc-800 rounded-2xl shadow-xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-zinc-200 dark:border-zinc-700 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
+                  成员列表：{membersModalTeam.name}
+                </h2>
+                <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                  {membersTotal !== null ? `共 ${membersTotal} 人` : " "}
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => fetchTeamMembers(membersModalTeam)}
+                  disabled={membersLoading}
+                  className="px-3 py-1.5 text-sm bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-900 dark:text-white rounded-lg transition disabled:opacity-50"
+                >
+                  {membersLoading ? "加载中..." : "刷新"}
+                </button>
+                <button
+                  onClick={closeMembersModal}
+                  className="px-3 py-1.5 text-sm bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-900 dark:text-white rounded-lg transition"
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6">
+              {membersLoading && (
+                <div className="text-sm text-zinc-600 dark:text-zinc-400">
+                  正在获取成员列表...
+                </div>
+              )}
+
+              {!membersLoading && membersError && (
+                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
+                  <div className="text-sm text-red-700 dark:text-red-300">
+                    {membersError}
+                  </div>
+                  <button
+                    onClick={() => fetchTeamMembers(membersModalTeam)}
+                    className="mt-3 px-4 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
+                  >
+                    重试
+                  </button>
+                </div>
+              )}
+
+              {!membersLoading && !membersError && (
+                <div className="bg-white dark:bg-zinc-800 rounded-xl border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+                  <div className="max-h-[65vh] overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-zinc-50 dark:bg-zinc-700/50 sticky top-0">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">
+                            姓名
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">
+                            邮箱
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">
+                            角色
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">
+                            加入时间
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">
+                            ID
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-200 dark:divide-zinc-700">
+                        {members.map((member) => (
+                          <tr
+                            key={member.id}
+                            className="hover:bg-zinc-50 dark:hover:bg-zinc-700/50"
+                          >
+                            <td className="px-4 py-3 text-zinc-900 dark:text-white">
+                              {member.name || "未设置"}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300 font-mono text-xs">
+                              {member.email}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
+                              {member.role}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
+                              {member.createdAt
+                                ? new Date(member.createdAt).toLocaleString()
+                                : "-"}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400 font-mono text-xs">
+                              {member.id}
+                            </td>
+                          </tr>
+                        ))}
+                        {members.length === 0 && (
+                          <tr>
+                            <td
+                              colSpan={5}
+                              className="px-4 py-8 text-center text-zinc-500 dark:text-zinc-400"
+                            >
+                              暂无成员信息
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

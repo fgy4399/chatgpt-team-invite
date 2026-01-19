@@ -249,6 +249,90 @@ export async function getTeamMembersForTeam(
   }
 }
 
+// 获取指定团队的全部成员（自动分页）
+export async function getAllTeamMembersForTeam(
+  accountId: string,
+  accessToken: string,
+  cookies?: string
+): Promise<TeamMembersResult> {
+  if (!accessToken || !accountId) {
+    return {
+      success: false,
+      error: "缺少 Access Token 或 Account ID",
+    };
+  }
+
+  const credentials: TeamCredentials = { accountId, accessToken, cookies };
+
+  const limit = 100;
+  let offset = 0;
+  const allMembers: TeamMember[] = [];
+  let total: number | undefined;
+
+  try {
+    while (true) {
+      const url = `${CHATGPT_API_BASE}/accounts/${accountId}/users?offset=${offset}&limit=${limit}&query=`;
+      const response = await fetch(url, {
+        headers: getHeaders(credentials),
+      });
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: `HTTP ${response.status}`,
+        };
+      }
+
+      const data = await response.json();
+
+      const members: TeamMember[] = (data.items || []).map((item: {
+        id: string;
+        name: string;
+        email: string;
+        role: string;
+        created_time: string;
+      }) => ({
+        id: item.id,
+        name: item.name || "未设置",
+        email: item.email,
+        role: item.role,
+        createdAt: item.created_time,
+      }));
+
+      allMembers.push(...members);
+
+      const pageTotal =
+        typeof data.total === "number" ? (data.total as number) : undefined;
+
+      // 仅当上游明确返回 total 时才使用它；避免 total 缺失时被误判为“已完成”
+      if (total === undefined && pageTotal !== undefined) {
+        // total=0 且本页有数据通常是异常响应，忽略以保证可继续分页拉取
+        if (pageTotal > 0 || members.length === 0) {
+          total = pageTotal;
+        }
+      }
+
+      // 没有更多数据或已拉取到总数
+      if (members.length === 0) break;
+      if (members.length < limit) break;
+      if (total !== undefined && total > 0 && allMembers.length >= total) break;
+
+      offset += limit;
+    }
+
+    return {
+      success: true,
+      members: allMembers,
+      total: total ?? allMembers.length,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+    };
+  }
+}
+
 // Legacy function using env vars
 export async function getTeamMembers(): Promise<TeamMembersResult> {
   const token = process.env.CHATGPT_ACCESS_TOKEN;

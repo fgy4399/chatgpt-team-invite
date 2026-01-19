@@ -21,24 +21,27 @@ const nextConfig: NextConfig = {
       { test: /LICENSE$/i, type: "asset/source" }
     );
 
-    if (isServer) {
-      const externals = config.externals ?? [];
-      config.externals = Array.isArray(externals) ? externals : [externals];
-      config.externals.push((...args: any[]) => {
-        const callback = args[args.length - 1];
-        const request =
-          typeof args[1] === "string"
-            ? args[1]
-            : typeof args[0]?.request === "string"
-              ? args[0].request
-              : undefined;
+	    if (isServer) {
+	      const externals = config.externals ?? [];
+	      config.externals = Array.isArray(externals) ? externals : [externals];
+	      config.externals.push((...args: unknown[]) => {
+	        const callback = args[args.length - 1];
+	        if (typeof callback !== "function") return;
 
-        if (typeof request === "string" && shouldExternalize(request)) {
-          return callback(null, `commonjs ${request}`);
-        }
-        return callback();
-      });
-    }
+	        const request =
+	          typeof args[1] === "string"
+	            ? args[1]
+	            : typeof (args[0] as { request?: unknown } | undefined)?.request ===
+	                  "string"
+	              ? (args[0] as { request: string }).request
+	              : undefined;
+
+	        if (typeof request === "string" && shouldExternalize(request)) {
+	          return callback(null, `commonjs ${request}`);
+	        }
+	        return callback();
+	      });
+	    }
 
     return config;
   },

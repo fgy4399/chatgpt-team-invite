@@ -62,11 +62,7 @@ npm run build
 npm run start
 ```
 
-如遇到构建兼容问题，可使用 webpack 模式：
-
-```bash
-npm run build -- --webpack
-```
+> 说明：Next.js 16 构建默认使用 Turbopack，但本项目包含自定义 webpack 配置，因此 `npm run build` 已默认启用 `--webpack`。
 
 ## Docker 部署（推荐）
 
