@@ -15,6 +15,14 @@ interface SubscriptionInfo {
   [key: string]: unknown;
 }
 
+interface TeamSubscriptionResult {
+  success: boolean;
+  subscription?: SubscriptionInfo;
+  error?: string;
+  requiresCookies?: boolean;
+  status?: number;
+}
+
 export interface TeamMember {
   id: string;
   name: string;
@@ -34,6 +42,15 @@ interface TeamCredentials {
   accountId: string;
   accessToken: string;
   cookies?: string;
+}
+
+function looksLikeCloudflareChallenge(body: string): boolean {
+  return (
+    body.includes("cf_chl") ||
+    body.includes("challenge-platform") ||
+    body.includes("__cf_chl") ||
+    body.includes("cf-please-wait")
+  );
 }
 
 function getHeaders(credentials?: TeamCredentials): Record<string, string> {
@@ -161,35 +178,122 @@ export async function sendTeamInvite(email: string): Promise<InviteResult> {
   });
 }
 
-export async function getTeamSubscription(): Promise<SubscriptionInfo | null> {
-  const token = process.env.CHATGPT_ACCESS_TOKEN;
-  const accountId = process.env.CHATGPT_ACCOUNT_ID;
-
-  if (!token || !accountId) {
-    return null;
+export async function getTeamSubscriptionForTeam(
+  accountId: string,
+  accessToken: string,
+  cookies?: string
+): Promise<TeamSubscriptionResult> {
+  if (!accessToken || !accountId) {
+    return {
+      success: false,
+      error: "缺少 Access Token 或 Account ID",
+    };
   }
+
+  const credentials: TeamCredentials = { accountId, accessToken, cookies };
 
   try {
     const response = await fetch(
       `${CHATGPT_API_BASE}/subscriptions?account_id=${accountId}`,
       {
-        headers: getHeaders(),
+        headers: getHeaders(credentials),
       }
     );
 
+    const status = response.status;
+    const bodyText = await response.text();
+
     if (!response.ok) {
-      return null;
+      if (looksLikeCloudflareChallenge(bodyText)) {
+        return {
+          success: false,
+          error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+          requiresCookies: true,
+          status,
+        };
+      }
+
+      if (status === 401 || status === 403) {
+        return {
+          success: false,
+          error: "凭据无效或已过期（HTTP 401/403）",
+          status,
+        };
+      }
+
+      let errorMessage = `HTTP ${status}`;
+      try {
+        const errorJson = JSON.parse(bodyText) as Record<string, unknown>;
+        const detail =
+          typeof errorJson.detail === "string" ? errorJson.detail : undefined;
+        const message =
+          typeof errorJson.message === "string" ? errorJson.message : undefined;
+        errorMessage = detail || message || errorMessage;
+      } catch {
+        errorMessage = bodyText.slice(0, 200) || errorMessage;
+      }
+
+      return {
+        success: false,
+        error: errorMessage,
+        status,
+      };
     }
 
-    return await response.json();
-  } catch {
-    return null;
+    // 某些情况下可能返回 200 但内容是挑战页
+    if (looksLikeCloudflareChallenge(bodyText)) {
+      return {
+        success: false,
+        error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+        requiresCookies: true,
+        status,
+      };
+    }
+
+    try {
+      const subscription = JSON.parse(bodyText) as SubscriptionInfo;
+      return {
+        success: true,
+        subscription,
+        status,
+      };
+    } catch {
+      return {
+        success: false,
+        error: "订阅信息解析失败（非 JSON 响应）",
+        status,
+      };
+    }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+    };
   }
 }
 
+export async function getTeamSubscription(): Promise<SubscriptionInfo | null> {
+  const token = process.env.CHATGPT_ACCESS_TOKEN;
+  const accountId = process.env.CHATGPT_ACCOUNT_ID;
+  const cookies = process.env.CHATGPT_COOKIES;
+
+  if (!token || !accountId) {
+    return null;
+  }
+
+  const result = await getTeamSubscriptionForTeam(accountId, token, cookies);
+  return result.success ? (result.subscription ?? null) : null;
+}
+
 export async function checkTokenValid(): Promise<boolean> {
-  const subscription = await getTeamSubscription();
-  return subscription !== null;
+  const token = process.env.CHATGPT_ACCESS_TOKEN;
+  const accountId = process.env.CHATGPT_ACCOUNT_ID;
+  const cookies = process.env.CHATGPT_COOKIES;
+
+  if (!token || !accountId) return false;
+
+  const result = await getTeamSubscriptionForTeam(accountId, token, cookies);
+  return result.success;
 }
 
 // Get team members for a specific team

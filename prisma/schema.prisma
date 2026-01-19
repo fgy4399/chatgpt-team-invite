@@ -38,6 +38,7 @@ model Team {
   maxMembers     Int      @default(0) // 0 = unlimited
   currentMembers Int      @default(0)
   isActive       Boolean  @default(true)
+  expiresAt      DateTime? // 到期时间（为空表示永不过期）
   priority       Int      @default(0) // lower = higher priority
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -45,6 +46,7 @@ model Team {
   invitations    Invitation[]
 
   @@index([isActive, priority])
+  @@index([expiresAt])
 }
 
 model InviteCode {

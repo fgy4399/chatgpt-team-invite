@@ -42,9 +42,13 @@ function shouldSyncTeamMemberCount(maxMembers: number, currentMembers: number): 
  */
 export async function findAvailableTeam(): Promise<TeamAssignmentResult> {
   try {
+    const now = new Date();
     // Get all active teams, sorted by priority
     const teams = await prisma.team.findMany({
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
       orderBy: { priority: "asc" },
     });
 
@@ -57,6 +61,11 @@ export async function findAvailableTeam(): Promise<TeamAssignmentResult> {
 
     // Find the first team that has available slots
     for (const team of teams) {
+      // 双保险：防止到期团队被选中
+      if (team.expiresAt && now > team.expiresAt) {
+        continue;
+      }
+
       // If maxMembers is 0, it means unlimited
       if (team.maxMembers === 0) {
         return {
@@ -77,8 +86,8 @@ export async function findAvailableTeam(): Promise<TeamAssignmentResult> {
       // 接近上限时，按 TTL 刷新该团队的真实成员数，避免超发
       if (shouldSyncTeamMemberCount(team.maxMembers, team.currentMembers)) {
         const lastSyncAt = teamMemberSyncCache.get(team.id) || 0;
-        const now = Date.now();
-        if (now - lastSyncAt > TEAM_MEMBER_SYNC_TTL_MS) {
+        const nowMs = Date.now();
+        if (nowMs - lastSyncAt > TEAM_MEMBER_SYNC_TTL_MS) {
           try {
             const result = await getTeamMembersForTeam(
               team.accountId,
@@ -93,7 +102,7 @@ export async function findAvailableTeam(): Promise<TeamAssignmentResult> {
                   ? result.members.length
                   : team.currentMembers;
 
-            teamMemberSyncCache.set(team.id, now);
+            teamMemberSyncCache.set(team.id, nowMs);
 
             if (actualCount !== team.currentMembers) {
               await prisma.team.update({
@@ -190,8 +199,12 @@ export async function sendInviteWithAutoTeam(
  * Sync member counts for all active teams from ChatGPT API
  */
 export async function syncAllTeamMemberCounts(): Promise<void> {
+  const now = new Date();
   const teams = await prisma.team.findMany({
-    where: { isActive: true },
+    where: {
+      isActive: true,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
   });
 
   for (const team of teams) {
@@ -225,8 +238,12 @@ export async function getTeamsCapacitySummary(): Promise<{
   totalUsed: number;
   hasAvailableSlots: boolean;
 }> {
+  const now = new Date();
   const teams = await prisma.team.findMany({
-    where: { isActive: true },
+    where: {
+      isActive: true,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
   });
 
   let totalCapacity = 0;

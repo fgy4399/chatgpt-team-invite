@@ -166,8 +166,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Check if we have teams configured in the database
-    const teamsCount = await prisma.team.count({ where: { isActive: true } });
+    // Check if we have teams configured in the database (排除已到期的团队)
+    const now = new Date();
+    const teamsCount = await prisma.team.count({
+      where: {
+        isActive: true,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+    });
 
     let teamId: string | null = null;
     let inviteResult: { success: boolean; error?: string };

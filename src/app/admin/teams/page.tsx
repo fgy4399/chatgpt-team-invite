@@ -11,6 +11,7 @@ interface Team {
   maxMembers: number;
   currentMembers: number;
   isActive: boolean;
+  expiresAt: string | null;
   priority: number;
   createdAt: string;
   updatedAt: string;
@@ -33,6 +34,7 @@ interface NewTeam {
   accessToken: string;
   cookies: string;
   maxMembers: number;
+  expiresAt: string;
   priority: number;
 }
 
@@ -43,8 +45,63 @@ interface EditTeam {
   accessToken: string;
   cookies: string;
   maxMembers: number;
+  expiresAt: string;
   priority: number;
 }
+
+function toDatetimeLocalValue(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const tzOffsetMs = date.getTimezoneOffset() * 60 * 1000;
+  const local = new Date(date.getTime() - tzOffsetMs);
+  return local.toISOString().slice(0, 16);
+}
+
+function datetimeLocalToIso(value: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function isExpired(iso: string | null | undefined): boolean {
+  if (!iso) return false;
+  const time = new Date(iso).getTime();
+  return !Number.isNaN(time) && time <= Date.now();
+}
+
+type TeamValidityState =
+  | { state: "idle" }
+  | { state: "loading" }
+  | {
+      state: "ok";
+      checkedAt: string;
+      planType?: string;
+      seatsAvailable?: number;
+      seatsUsed?: number;
+      upstreamStatus?: number;
+    }
+  | {
+      state: "error";
+      checkedAt: string;
+      message: string;
+      requiresCookies?: boolean;
+      upstreamStatus?: number;
+    };
+
+type TeamStatusApiResponse = {
+  ok?: boolean;
+  checkedAt?: string;
+  error?: string;
+  requiresCookies?: boolean;
+  upstreamStatus?: number;
+  subscription?: {
+    seats_available?: number;
+    seats_used?: number;
+    plan_type?: string;
+  };
+};
 
 export default function TeamsPage() {
   const router = useRouter();
@@ -59,6 +116,7 @@ export default function TeamsPage() {
     accessToken: "",
     cookies: "",
     maxMembers: 0,
+    expiresAt: "",
     priority: 0,
   });
   const [editingTeam, setEditingTeam] = useState<EditTeam | null>(null);
@@ -71,7 +129,94 @@ export default function TeamsPage() {
   const [membersTotal, setMembersTotal] = useState<number | null>(null);
   const membersFetchControllerRef = useRef<AbortController | null>(null);
 
+  const [teamValidityById, setTeamValidityById] = useState<
+    Record<string, TeamValidityState>
+  >({});
+
   const getToken = () => localStorage.getItem("admin_token");
+
+  const checkTeamValidity = useCallback(
+    async (team: Team) => {
+      const token = getToken();
+      if (!token) {
+        router.push("/admin");
+        return;
+      }
+
+      setTeamValidityById((prev) => ({
+        ...prev,
+        [team.id]: { state: "loading" },
+      }));
+
+      try {
+        const res = await fetch(`/api/admin/teams/${team.id}/status`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (res.status === 401) {
+          localStorage.removeItem("admin_token");
+          router.push("/admin");
+          return;
+        }
+
+        const data = (await res
+          .json()
+          .catch(() => ({}))) as Partial<TeamStatusApiResponse>;
+
+        const checkedAt =
+          typeof data.checkedAt === "string"
+            ? data.checkedAt
+            : new Date().toISOString();
+
+        if (res.ok && data.ok) {
+          const sub = data.subscription || {};
+          setTeamValidityById((prev) => ({
+            ...prev,
+            [team.id]: {
+              state: "ok",
+              checkedAt,
+              planType: sub.plan_type,
+              seatsAvailable: sub.seats_available,
+              seatsUsed: sub.seats_used,
+              upstreamStatus:
+                typeof data.upstreamStatus === "number"
+                  ? data.upstreamStatus
+                  : undefined,
+            },
+          }));
+          return;
+        }
+
+        setTeamValidityById((prev) => ({
+          ...prev,
+          [team.id]: {
+            state: "error",
+            checkedAt,
+            message:
+              typeof data.error === "string" && data.error
+                ? data.error
+                : "检测失败",
+            requiresCookies: Boolean(data.requiresCookies),
+            upstreamStatus:
+              typeof data.upstreamStatus === "number"
+                ? data.upstreamStatus
+                : undefined,
+          },
+        }));
+      } catch (error) {
+        setTeamValidityById((prev) => ({
+          ...prev,
+          [team.id]: {
+            state: "error",
+            checkedAt: new Date().toISOString(),
+            message:
+              error instanceof Error ? error.message : "检测失败，请稍后重试",
+          },
+        }));
+      }
+    },
+    [router]
+  );
 
   const closeMembersModal = () => {
     membersFetchControllerRef.current?.abort();
@@ -203,13 +348,18 @@ export default function TeamsPage() {
 
     setSaving(true);
     try {
+      const payload = {
+        ...newTeam,
+        expiresAt: datetimeLocalToIso(newTeam.expiresAt),
+      };
+
       const res = await fetch("/api/admin/teams", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(newTeam),
+        body: JSON.stringify(payload),
       });
 
       if (res.ok) {
@@ -220,6 +370,7 @@ export default function TeamsPage() {
           accessToken: "",
           cookies: "",
           maxMembers: 0,
+          expiresAt: "",
           priority: 0,
         });
         await fetchTeams();
@@ -264,6 +415,7 @@ export default function TeamsPage() {
       accessToken: "",
       cookies: "",
       maxMembers: team.maxMembers,
+      expiresAt: toDatetimeLocalValue(team.expiresAt),
       priority: team.priority,
     });
     setShowAddForm(false);
@@ -281,6 +433,7 @@ export default function TeamsPage() {
         name: editingTeam.name,
         accountId: editingTeam.accountId,
         maxMembers: editingTeam.maxMembers,
+        expiresAt: datetimeLocalToIso(editingTeam.expiresAt),
         priority: editingTeam.priority,
       };
 
@@ -340,6 +493,63 @@ export default function TeamsPage() {
     setMembersModalTeam(team);
     setMembersModalOpen(true);
     await fetchTeamMembers(team);
+  };
+
+  const renderTeamValidity = (team: Team) => {
+    const state = teamValidityById[team.id];
+    if (!state || state.state === "idle") {
+      return (
+        <span className="px-2 py-1 rounded text-xs font-medium bg-zinc-100 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-300">
+          未检测
+        </span>
+      );
+    }
+
+    if (state.state === "loading") {
+      return (
+        <span className="px-2 py-1 rounded text-xs font-medium bg-zinc-100 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-300">
+          检测中...
+        </span>
+      );
+    }
+
+    if (state.state === "ok") {
+      const hasSeatInfo =
+        typeof state.seatsUsed === "number" ||
+        typeof state.seatsAvailable === "number";
+      return (
+        <div className="flex flex-col gap-1">
+          <span className="px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300 w-fit">
+            有效
+          </span>
+          {hasSeatInfo && (
+            <span className="text-xs text-zinc-600 dark:text-zinc-300">
+              已用 {state.seatsUsed ?? "-"} / 可用 {state.seatsAvailable ?? "-"}
+            </span>
+          )}
+          {state.planType && (
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              {state.planType}
+            </span>
+          )}
+        </div>
+      );
+    }
+
+    const badgeClass = state.requiresCookies
+      ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"
+      : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300";
+    const label = state.requiresCookies ? "需 Cookies" : "无效";
+    return (
+      <div className="flex flex-col gap-1">
+        <span className={`px-2 py-1 rounded text-xs font-medium w-fit ${badgeClass}`}>
+          {label}
+        </span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400 break-words">
+          {state.message}
+        </span>
+      </div>
+    );
   };
 
   const getCapacityBadge = (team: Team) => {
@@ -502,6 +712,19 @@ export default function TeamsPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                    到期时间 (留空=永不过期)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={newTeam.expiresAt}
+                    onChange={(e) =>
+                      setNewTeam({ ...newTeam, expiresAt: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
                     优先级 (数字越小越优先)
                   </label>
                   <input
@@ -602,6 +825,19 @@ export default function TeamsPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                    到期时间 (留空=永不过期)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={editingTeam.expiresAt}
+                    onChange={(e) =>
+                      setEditingTeam({ ...editingTeam, expiresAt: e.target.value })
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
                     优先级 (数字越小越优先)
                   </label>
                   <input
@@ -640,16 +876,18 @@ export default function TeamsPage() {
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-zinc-50 dark:bg-zinc-700/50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">团队名称</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">成员/上限</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">状态</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">优先级</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">邀请数</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">操作</th>
-                </tr>
-              </thead>
+	              <thead className="bg-zinc-50 dark:bg-zinc-700/50">
+	                <tr>
+	                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">团队名称</th>
+	                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">成员/上限</th>
+	                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">状态</th>
+	                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">有效性</th>
+	                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">到期时间</th>
+	                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">优先级</th>
+	                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">邀请数</th>
+	                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase">操作</th>
+	                </tr>
+	              </thead>
               <tbody className="divide-y divide-zinc-200 dark:divide-zinc-700">
                 {teams.map((team) => (
                   <tr key={team.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-700/50">
@@ -665,31 +903,63 @@ export default function TeamsPage() {
                         {getCapacityBadge(team)}
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <button
-                        onClick={() => handleToggleActive(team)}
-                        className={`px-2 py-1 rounded text-xs font-medium ${
-                          team.isActive
-                            ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
-                            : "bg-zinc-100 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-300"
-                        }`}
-                      >
-                        {team.isActive ? "已启用" : "已禁用"}
-                      </button>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-zinc-600 dark:text-zinc-400">
-                      {team.priority}
-                    </td>
+	                    <td className="px-6 py-4">
+	                      <button
+	                        onClick={() => handleToggleActive(team)}
+	                        className={`px-2 py-1 rounded text-xs font-medium ${
+	                          team.isActive
+	                            ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
+	                            : "bg-zinc-100 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-300"
+	                      }`}
+	                      >
+	                        {team.isActive ? "已启用" : "已禁用"}
+	                      </button>
+	                    </td>
+	                    <td className="px-6 py-4">{renderTeamValidity(team)}</td>
+	                    <td className="px-6 py-4">
+	                      {team.expiresAt ? (
+	                        <div className="flex flex-col gap-1">
+	                          <span
+	                            className={`text-sm ${
+	                              isExpired(team.expiresAt)
+	                                ? "text-red-600 dark:text-red-400"
+	                                : "text-zinc-600 dark:text-zinc-300"
+	                            }`}
+	                          >
+	                            {new Date(team.expiresAt).toLocaleString()}
+	                          </span>
+	                          {isExpired(team.expiresAt) && (
+	                            <span className="inline-block w-fit px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300">
+	                              已过期
+	                            </span>
+	                          )}
+	                        </div>
+	                      ) : (
+	                        <span className="text-sm text-zinc-600 dark:text-zinc-300">
+	                          永不过期
+	                        </span>
+	                      )}
+	                    </td>
+	                    <td className="px-6 py-4 text-sm text-zinc-600 dark:text-zinc-400">
+	                      {team.priority}
+	                    </td>
                     <td className="px-6 py-4 text-sm text-zinc-600 dark:text-zinc-400">
                       {team._count.invitations}
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
+	                    <td className="px-6 py-4">
+	                      <div className="flex items-center gap-3">
                         <button
-                          onClick={() => handleViewMembers(team)}
-                          className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                          onClick={() => checkTeamValidity(team)}
+                          disabled={teamValidityById[team.id]?.state === "loading"}
+                          className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white disabled:opacity-50"
                         >
-                          查看成员
+                          检测
+                        </button>
+	                        <button
+	                          onClick={() => handleViewMembers(team)}
+	                          className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+	                        >
+	                          查看成员
                         </button>
                         <button
                           onClick={() => handleStartEdit(team)}
@@ -709,7 +979,7 @@ export default function TeamsPage() {
                 ))}
                 {teams.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-zinc-500 dark:text-zinc-400">
+                    <td colSpan={8} className="px-6 py-8 text-center text-zinc-500 dark:text-zinc-400">
                       暂无团队，点击“添加团队”开始配置
                     </td>
                   </tr>
@@ -726,6 +996,8 @@ export default function TeamsPage() {
             <li>添加多个 ChatGPT Team 账户，系统会自动分配邀请到未满的团队</li>
             <li>优先级数字越小，优先使用该团队（0 为最高优先级）</li>
             <li>成员上限设为 0 表示无限制</li>
+            <li>设置“到期时间”后，到期的团队将不再接收新邀请（留空表示永不过期）</li>
+            <li>点击“检测”可实时检查团队凭据有效性（可能受到 Cloudflare/限流影响）</li>
             <li>点击“同步成员数”可从 ChatGPT API 同步实际成员数量</li>
             <li>禁用的团队不会接收新邀请</li>
           </ul>

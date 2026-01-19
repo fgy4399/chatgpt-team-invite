@@ -32,9 +32,13 @@ async function mapWithConcurrency<T, R>(
 // POST /api/admin/teams/sync - Sync team member counts from ChatGPT API
 export const POST = withAuth(async () => {
   try {
+    const now = new Date();
     // Get all active teams
     const teams = await prisma.team.findMany({
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
     });
 
     // 限制并发，避免触发 ChatGPT API 限流

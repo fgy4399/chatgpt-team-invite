@@ -18,6 +18,7 @@ export const GET = withAuth(async () => {
         maxMembers: true,
         currentMembers: true,
         isActive: true,
+        expiresAt: true,
         priority: true,
         createdAt: true,
         updatedAt: true,
@@ -40,7 +41,7 @@ export const GET = withAuth(async () => {
 // POST /api/admin/teams - Create a new team
 export const POST = withAuth(async (req: NextRequest) => {
   try {
-    const { name, accountId, accessToken, cookies, maxMembers, priority } =
+    const { name, accountId, accessToken, cookies, maxMembers, priority, expiresAt } =
       await req.json();
 
     if (!name || !accountId || !accessToken) {
@@ -48,6 +49,18 @@ export const POST = withAuth(async (req: NextRequest) => {
         { error: "名称、Account ID 和 Access Token 为必填项" },
         { status: 400 }
       );
+    }
+
+    let expiresAtValue: Date | null = null;
+    if (expiresAt !== undefined && expiresAt !== null && expiresAt !== "") {
+      const parsed = new Date(expiresAt);
+      if (Number.isNaN(parsed.getTime())) {
+        return NextResponse.json(
+          { error: "到期时间格式无效" },
+          { status: 400 }
+        );
+      }
+      expiresAtValue = parsed;
     }
 
     // Check if accountId already exists
@@ -84,6 +97,7 @@ export const POST = withAuth(async (req: NextRequest) => {
         cookies: cookies || null,
         maxMembers: maxMembers || 0,
         currentMembers,
+        expiresAt: expiresAtValue,
         priority: priority || 0,
       },
     });
@@ -101,11 +115,27 @@ export const POST = withAuth(async (req: NextRequest) => {
 // PUT /api/admin/teams - Update a team
 export const PUT = withAuth(async (req: NextRequest) => {
   try {
-    const { id, name, accountId, accessToken, cookies, maxMembers, priority, isActive } =
+    const { id, name, accountId, accessToken, cookies, maxMembers, priority, isActive, expiresAt } =
       await req.json();
 
     if (!id) {
       return NextResponse.json({ error: "缺少团队 ID" }, { status: 400 });
+    }
+
+    let expiresAtPatch: Date | null | undefined = undefined;
+    if (expiresAt !== undefined) {
+      if (expiresAt === null || expiresAt === "") {
+        expiresAtPatch = null;
+      } else {
+        const parsed = new Date(expiresAt);
+        if (Number.isNaN(parsed.getTime())) {
+          return NextResponse.json(
+            { error: "到期时间格式无效" },
+            { status: 400 }
+          );
+        }
+        expiresAtPatch = parsed;
+      }
     }
 
     const team = await prisma.team.update({
@@ -116,6 +146,7 @@ export const PUT = withAuth(async (req: NextRequest) => {
         ...(accessToken !== undefined && { accessToken }),
         ...(cookies !== undefined && { cookies }),
         ...(maxMembers !== undefined && { maxMembers }),
+        ...(expiresAtPatch !== undefined && { expiresAt: expiresAtPatch }),
         ...(priority !== undefined && { priority }),
         ...(isActive !== undefined && { isActive }),
       },
