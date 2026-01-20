@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { getTeamMembersForTeam } from "@/lib/chatgpt";
+import { getTeamEntitlementForTeam, getTeamMembersForTeam } from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -41,8 +41,15 @@ export const GET = withAuth(async () => {
 // POST /api/admin/teams - Create a new team
 export const POST = withAuth(async (req: NextRequest) => {
   try {
-    const { name, accountId, accessToken, cookies, maxMembers, priority, expiresAt } =
-      await req.json();
+    const { name, accountId, accessToken, cookies, maxMembers, priority } =
+      (await req.json()) as {
+        name?: string;
+        accountId?: string;
+        accessToken?: string;
+        cookies?: string;
+        maxMembers?: number;
+        priority?: number;
+      };
 
     if (!name || !accountId || !accessToken) {
       return NextResponse.json(
@@ -52,16 +59,73 @@ export const POST = withAuth(async (req: NextRequest) => {
     }
 
     let expiresAtValue: Date | null = null;
-    if (expiresAt !== undefined && expiresAt !== null && expiresAt !== "") {
-      const parsed = new Date(expiresAt);
-      if (Number.isNaN(parsed.getTime())) {
-        return NextResponse.json(
-          { error: "到期时间格式无效" },
-          { status: 400 }
-        );
-      }
-      expiresAtValue = parsed;
+    const entitlementResult = await getTeamEntitlementForTeam(
+      accountId,
+      accessToken,
+      cookies
+    );
+
+    if (!entitlementResult.success || !entitlementResult.entitlement) {
+      return NextResponse.json(
+        {
+          error:
+            entitlementResult.error ||
+            "无法自动获取到期时间，请检查凭据或配置 Cookies",
+        },
+        { status: 400 }
+      );
     }
+
+    if (!entitlementResult.entitlement.hasActiveSubscription) {
+      return NextResponse.json(
+        { error: "该账号当前无有效订阅，无法自动获取到期时间" },
+        { status: 400 }
+      );
+    }
+
+    if (
+      entitlementResult.entitlement.planType &&
+      entitlementResult.entitlement.planType !== "team"
+    ) {
+      return NextResponse.json(
+        {
+          error: `该 Account ID 不是 Team 工作区（plan_type=${entitlementResult.entitlement.planType}），请使用 Team 的 Account ID`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const expiresIso =
+      typeof entitlementResult.entitlement.expiresAt === "string" &&
+      entitlementResult.entitlement.expiresAt
+        ? entitlementResult.entitlement.expiresAt
+        : typeof entitlementResult.entitlement.renewsAt === "string" &&
+            entitlementResult.entitlement.renewsAt
+          ? entitlementResult.entitlement.renewsAt
+          : null;
+
+    if (!expiresIso) {
+      return NextResponse.json(
+        { error: "未获取到订阅到期时间字段，请检查凭据或配置 Cookies" },
+        { status: 400 }
+      );
+    }
+
+    const expiresParsed = new Date(expiresIso);
+    if (Number.isNaN(expiresParsed.getTime())) {
+      return NextResponse.json(
+        { error: "订阅到期时间解析失败，请重试" },
+        { status: 400 }
+      );
+    }
+
+    if (expiresParsed.getTime() <= Date.now()) {
+      return NextResponse.json(
+        { error: "该账号订阅已到期，无法添加为可用团队" },
+        { status: 400 }
+      );
+    }
+    expiresAtValue = expiresParsed;
 
     // Check if accountId already exists
     const existing = await prisma.team.findUnique({

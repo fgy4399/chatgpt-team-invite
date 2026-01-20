@@ -34,7 +34,6 @@ interface NewTeam {
   accessToken: string;
   cookies: string;
   maxMembers: number;
-  expiresAt: string;
   priority: number;
 }
 
@@ -45,24 +44,7 @@ interface EditTeam {
   accessToken: string;
   cookies: string;
   maxMembers: number;
-  expiresAt: string;
   priority: number;
-}
-
-function toDatetimeLocalValue(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  const tzOffsetMs = date.getTimezoneOffset() * 60 * 1000;
-  const local = new Date(date.getTime() - tzOffsetMs);
-  return local.toISOString().slice(0, 16);
-}
-
-function datetimeLocalToIso(value: string): string | null {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString();
 }
 
 function isExpired(iso: string | null | undefined): boolean {
@@ -116,7 +98,6 @@ export default function TeamsPage() {
     accessToken: "",
     cookies: "",
     maxMembers: 0,
-    expiresAt: "",
     priority: 0,
   });
   const [editingTeam, setEditingTeam] = useState<EditTeam | null>(null);
@@ -448,18 +429,13 @@ export default function TeamsPage() {
 
     setSaving(true);
     try {
-      const payload = {
-        ...newTeam,
-        expiresAt: datetimeLocalToIso(newTeam.expiresAt),
-      };
-
       const res = await fetch("/api/admin/teams", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(newTeam),
       });
 
       if (res.ok) {
@@ -470,7 +446,6 @@ export default function TeamsPage() {
           accessToken: "",
           cookies: "",
           maxMembers: 0,
-          expiresAt: "",
           priority: 0,
         });
         await fetchTeams();
@@ -515,7 +490,6 @@ export default function TeamsPage() {
       accessToken: "",
       cookies: "",
       maxMembers: team.maxMembers,
-      expiresAt: toDatetimeLocalValue(team.expiresAt),
       priority: team.priority,
     });
     setShowAddForm(false);
@@ -533,7 +507,6 @@ export default function TeamsPage() {
         name: editingTeam.name,
         accountId: editingTeam.accountId,
         maxMembers: editingTeam.maxMembers,
-        expiresAt: datetimeLocalToIso(editingTeam.expiresAt),
         priority: editingTeam.priority,
       };
 
@@ -773,7 +746,7 @@ export default function TeamsPage() {
           <div className="rounded-2xl border border-violet-200/60 dark:border-violet-500/20 bg-white/80 dark:bg-zinc-900/60 backdrop-blur shadow p-6 mb-8">
             <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-1">添加新团队</h2>
             <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-5">
-              配置账号凭据、名额上限、到期时间与优先级
+              配置账号凭据、名额上限与优先级；到期时间将自动获取
             </p>
             <form onSubmit={handleAddTeam} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -835,19 +808,6 @@ export default function TeamsPage() {
                     min="0"
                     value={newTeam.maxMembers}
                     onChange={(e) => setNewTeam({ ...newTeam, maxMembers: parseInt(e.target.value) || 0 })}
-                    className="w-full px-4 py-2.5 rounded-xl border border-zinc-300/80 dark:border-zinc-700 bg-white/90 dark:bg-zinc-800/80 text-zinc-900 dark:text-white focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
-                    到期时间 (留空=永不过期)
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={newTeam.expiresAt}
-                    onChange={(e) =>
-                      setNewTeam({ ...newTeam, expiresAt: e.target.value })
-                    }
                     className="w-full px-4 py-2.5 rounded-xl border border-zinc-300/80 dark:border-zinc-700 bg-white/90 dark:bg-zinc-800/80 text-zinc-900 dark:text-white focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-colors"
                   />
                 </div>
@@ -951,19 +911,6 @@ export default function TeamsPage() {
                     min="0"
                     value={editingTeam.maxMembers}
                     onChange={(e) => setEditingTeam({ ...editingTeam, maxMembers: parseInt(e.target.value) || 0 })}
-                    className="w-full px-4 py-2.5 rounded-xl border border-zinc-300/80 dark:border-zinc-700 bg-white/90 dark:bg-zinc-800/80 text-zinc-900 dark:text-white focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
-                    到期时间 (留空=永不过期)
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={editingTeam.expiresAt}
-                    onChange={(e) =>
-                      setEditingTeam({ ...editingTeam, expiresAt: e.target.value })
-                    }
                     className="w-full px-4 py-2.5 rounded-xl border border-zinc-300/80 dark:border-zinc-700 bg-white/90 dark:bg-zinc-800/80 text-zinc-900 dark:text-white focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-colors"
                   />
                 </div>
@@ -1134,7 +1081,7 @@ export default function TeamsPage() {
             <li>添加多个 ChatGPT Team 账户，系统会自动分配邀请到未满的团队</li>
             <li>优先级数字越小，优先使用该团队（0 为最高优先级）</li>
             <li>成员上限设为 0 表示无限制</li>
-            <li>设置“到期时间”后，到期的团队将不再接收新邀请（留空表示永不过期）</li>
+            <li>到期时间会在添加团队时自动从 ChatGPT 订阅信息获取，到期后团队将不再接收新邀请</li>
             <li>点击“邀请”可指定某个团队手动发送邀请邮件</li>
             <li>点击“检测”可实时检查团队凭据有效性（可能受到 Cloudflare/限流影响）</li>
             <li>点击“同步成员数”可从 ChatGPT API 同步实际成员数量</li>

@@ -23,6 +23,54 @@ interface TeamSubscriptionResult {
   status?: number;
 }
 
+interface AccountEntitlementInfo {
+  subscription_id?: string | null;
+  has_active_subscription?: boolean;
+  subscription_plan?: unknown;
+  expires_at?: string | null;
+  renews_at?: string | null;
+  cancels_at?: string | null;
+  billing_period?: string | null;
+  billing_currency?: string | null;
+  is_delinquent?: boolean;
+  [key: string]: unknown;
+}
+
+interface AccountCheckAccountInfo {
+  plan_type?: string;
+  structure?: string;
+  workspace_type?: string | null;
+  [key: string]: unknown;
+}
+
+interface AccountCheckAccount {
+  account?: AccountCheckAccountInfo;
+  entitlement?: AccountEntitlementInfo;
+  can_access_with_session?: boolean;
+  [key: string]: unknown;
+}
+
+interface AccountCheckResponse {
+  accounts?: Record<string, AccountCheckAccount>;
+  account_ordering?: string[];
+}
+
+interface TeamEntitlementResult {
+  success: boolean;
+  entitlement?: {
+    planType?: string;
+    subscriptionPlan?: unknown;
+    hasActiveSubscription: boolean;
+    expiresAt?: string | null;
+    renewsAt?: string | null;
+    cancelsAt?: string | null;
+    isDelinquent?: boolean;
+  };
+  error?: string;
+  requiresCookies?: boolean;
+  status?: number;
+}
+
 export interface TeamMember {
   id: string;
   name: string;
@@ -54,9 +102,9 @@ function looksLikeCloudflareChallenge(body: string): boolean {
 }
 
 function getHeaders(credentials?: TeamCredentials): Record<string, string> {
-  const token = credentials?.accessToken || process.env.CHATGPT_ACCESS_TOKEN;
-  const cookies = credentials?.cookies || process.env.CHATGPT_COOKIES;
-  const accountId = credentials?.accountId || process.env.CHATGPT_ACCOUNT_ID;
+  const token = credentials?.accessToken ?? process.env.CHATGPT_ACCESS_TOKEN;
+  const cookies = credentials?.cookies ?? process.env.CHATGPT_COOKIES;
+  const accountId = credentials?.accountId ?? process.env.CHATGPT_ACCOUNT_ID;
 
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${token}`,
@@ -264,6 +312,135 @@ export async function getTeamSubscriptionForTeam(
         status,
       };
     }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+    };
+  }
+}
+
+export async function getTeamEntitlementForTeam(
+  accountId: string,
+  accessToken: string,
+  cookies?: string
+): Promise<TeamEntitlementResult> {
+  if (!accessToken || !accountId) {
+    return {
+      success: false,
+      error: "缺少 Access Token 或 Account ID",
+    };
+  }
+
+  const credentials: TeamCredentials = { accountId, accessToken, cookies };
+
+  try {
+    const timezoneOffsetMin = 0;
+    const response = await fetch(
+      `${CHATGPT_API_BASE}/accounts/check/v4-2023-04-27?timezone_offset_min=${timezoneOffsetMin}`,
+      { headers: getHeaders(credentials) }
+    );
+
+    const status = response.status;
+    const bodyText = await response.text();
+
+    if (!response.ok) {
+      if (looksLikeCloudflareChallenge(bodyText)) {
+        return {
+          success: false,
+          error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+          requiresCookies: true,
+          status,
+        };
+      }
+
+      if (status === 401 || status === 403) {
+        return {
+          success: false,
+          error: "凭据无效或已过期（HTTP 401/403）",
+          status,
+        };
+      }
+
+      let errorMessage = `HTTP ${status}`;
+      try {
+        const errorJson = JSON.parse(bodyText) as Record<string, unknown>;
+        const detail =
+          typeof errorJson.detail === "string" ? errorJson.detail : undefined;
+        const message =
+          typeof errorJson.message === "string" ? errorJson.message : undefined;
+        errorMessage = detail || message || errorMessage;
+      } catch {
+        errorMessage = bodyText.slice(0, 200) || errorMessage;
+      }
+
+      return {
+        success: false,
+        error: errorMessage,
+        status,
+      };
+    }
+
+    if (looksLikeCloudflareChallenge(bodyText)) {
+      return {
+        success: false,
+        error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+        requiresCookies: true,
+        status,
+      };
+    }
+
+    let data: AccountCheckResponse;
+    try {
+      data = JSON.parse(bodyText) as AccountCheckResponse;
+    } catch {
+      return {
+        success: false,
+        error: "账号权益信息解析失败（非 JSON 响应）",
+        status,
+      };
+    }
+
+    const entry = data.accounts?.[accountId];
+    if (!entry) {
+      return {
+        success: false,
+        error: "账号权益接口未返回该 Account ID 的信息",
+        status,
+      };
+    }
+
+    const planType =
+      typeof entry.account?.plan_type === "string" ? entry.account.plan_type : undefined;
+    const rawEntitlement = entry.entitlement ?? {};
+    const hasActiveSubscription = Boolean(rawEntitlement.has_active_subscription);
+
+    const expiresAt =
+      typeof rawEntitlement.expires_at === "string" || rawEntitlement.expires_at === null
+        ? rawEntitlement.expires_at
+        : undefined;
+    const renewsAt =
+      typeof rawEntitlement.renews_at === "string" || rawEntitlement.renews_at === null
+        ? rawEntitlement.renews_at
+        : undefined;
+    const cancelsAt =
+      typeof rawEntitlement.cancels_at === "string" || rawEntitlement.cancels_at === null
+        ? rawEntitlement.cancels_at
+        : undefined;
+
+    return {
+      success: true,
+      entitlement: {
+        planType,
+        subscriptionPlan: rawEntitlement.subscription_plan,
+        hasActiveSubscription,
+        expiresAt,
+        renewsAt,
+        cancelsAt,
+        isDelinquent: Boolean(rawEntitlement.is_delinquent),
+      },
+      status,
+    };
   } catch (error) {
     return {
       success: false,
