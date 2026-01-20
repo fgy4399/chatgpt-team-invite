@@ -1176,7 +1176,7 @@ export default function TeamsPage() {
                       {team._count.invitations}
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-nowrap items-center gap-2">
                         <button
                           onClick={() => openInviteModal(team)}
                           disabled={!team.isActive || isExpired(team.expiresAt)}
