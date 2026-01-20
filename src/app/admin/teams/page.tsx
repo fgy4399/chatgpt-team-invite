@@ -108,6 +108,8 @@ export default function TeamsPage() {
   const [membersError, setMembersError] = useState("");
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [membersTotal, setMembersTotal] = useState<number | null>(null);
+  const [kickSubmittingId, setKickSubmittingId] = useState<string | null>(null);
+  const [kickError, setKickError] = useState("");
   const membersFetchControllerRef = useRef<AbortController | null>(null);
 
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
@@ -294,6 +296,8 @@ export default function TeamsPage() {
     setMembersError("");
     setMembers([]);
     setMembersTotal(null);
+    setKickSubmittingId(null);
+    setKickError("");
   }, []);
 
   useEffect(() => {
@@ -323,6 +327,7 @@ export default function TeamsPage() {
 
     setMembersLoading(true);
     setMembersError("");
+    setKickError("");
     setMembers([]);
     setMembersTotal(null);
 
@@ -565,7 +570,66 @@ export default function TeamsPage() {
   const handleViewMembers = async (team: Team) => {
     setMembersModalTeam(team);
     setMembersModalOpen(true);
+    setKickError("");
     await fetchTeamMembers(team);
+  };
+
+  const handleKickMember = async (member: TeamMember) => {
+    const team = membersModalTeam;
+    if (!team) return;
+
+    const token = getToken();
+    if (!token) {
+      router.push("/admin");
+      return;
+    }
+
+    if (!confirm(`确定要将 ${member.email} 移出该团队吗？`)) return;
+
+    setKickSubmittingId(member.id);
+    setKickError("");
+
+    try {
+      const res = await fetch(
+        `/api/admin/teams/${team.id}/members/${member.id}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      if (res.status === 401) {
+        localStorage.removeItem("admin_token");
+        router.push("/admin");
+        return;
+      }
+
+      type KickMemberApiResponse = {
+        success?: boolean;
+        error?: string;
+        requiresCookies?: boolean;
+      };
+
+      const data = (await res
+        .json()
+        .catch(() => ({}))) as Partial<KickMemberApiResponse>;
+
+      if (!res.ok) {
+        setKickError(data.error || "踢出成员失败");
+        return;
+      }
+
+      setMembers((prev) => prev.filter((item) => item.id !== member.id));
+      setMembersTotal((prev) =>
+        typeof prev === "number" ? Math.max(prev - 1, 0) : prev
+      );
+    } catch (error) {
+      setKickError(
+        error instanceof Error ? error.message : "踢出成员失败，请稍后重试"
+      );
+    } finally {
+      setKickSubmittingId(null);
+    }
   };
 
   const renderTeamValidity = (team: Team) => {
@@ -1252,6 +1316,17 @@ export default function TeamsPage() {
                 </div>
               )}
 
+              {!membersLoading && !membersError && kickError && (
+                <div
+                  role="alert"
+                  className="mb-4 bg-red-50/80 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4"
+                >
+                  <div className="text-sm text-red-700 dark:text-red-300">
+                    {kickError}
+                  </div>
+                </div>
+              )}
+
               {!membersLoading && !membersError && (
                 <div className="rounded-xl border border-zinc-200/70 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 overflow-hidden">
                   <div className="max-h-[65vh] overflow-auto">
@@ -1273,37 +1348,54 @@ export default function TeamsPage() {
                           <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
                             ID
                           </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+                            操作
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800">
-                        {members.map((member) => (
-                          <tr
-                            key={member.id}
-                            className="hover:bg-violet-50/50 dark:hover:bg-violet-500/10 transition-colors"
-                          >
-                            <td className="px-4 py-3 text-zinc-900 dark:text-white">
-                              {member.name || "未设置"}
-                            </td>
-                            <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300 font-mono text-xs">
-                              {member.email}
-                            </td>
-                            <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
-                              {member.role}
-                            </td>
-                            <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
-                              {member.createdAt
-                                ? new Date(member.createdAt).toLocaleString()
-                                : "-"}
-                            </td>
-                            <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400 font-mono text-xs">
-                              {member.id}
-                            </td>
-                          </tr>
-                        ))}
+                        {members.map((member) => {
+                          const isOwner = member.role.toLowerCase().includes("owner");
+                          const isKicking = kickSubmittingId === member.id;
+                          return (
+                            <tr
+                              key={member.id}
+                              className="hover:bg-violet-50/50 dark:hover:bg-violet-500/10 transition-colors"
+                            >
+                              <td className="px-4 py-3 text-zinc-900 dark:text-white">
+                                {member.name || "未设置"}
+                              </td>
+                              <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300 font-mono text-xs">
+                                {member.email}
+                              </td>
+                              <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
+                                {member.role}
+                              </td>
+                              <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
+                                {member.createdAt
+                                  ? new Date(member.createdAt).toLocaleString()
+                                  : "-"}
+                              </td>
+                              <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400 font-mono text-xs">
+                                {member.id}
+                              </td>
+                              <td className="px-4 py-3">
+                                <button
+                                  type="button"
+                                  disabled={isOwner || isKicking}
+                                  onClick={() => handleKickMember(member)}
+                                  className="inline-flex items-center px-3 py-1.5 rounded-lg border border-red-200/70 dark:border-red-500/30 bg-red-50/80 dark:bg-red-500/10 text-xs text-red-700 dark:text-red-200 hover:bg-red-100 dark:hover:bg-red-500/20 transition-colors disabled:opacity-60"
+                                >
+                                  {isOwner ? "不可移除" : isKicking ? "踢出中..." : "踢出"}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                         {members.length === 0 && (
                           <tr>
                             <td
-                              colSpan={5}
+                              colSpan={6}
                               className="px-4 py-10 text-center text-zinc-600 dark:text-zinc-400"
                             >
                               暂无成员信息

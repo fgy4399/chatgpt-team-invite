@@ -86,6 +86,13 @@ interface TeamMembersResult {
   error?: string;
 }
 
+interface TeamMemberKickResult {
+  success: boolean;
+  error?: string;
+  requiresCookies?: boolean;
+  status?: number;
+}
+
 interface TeamCredentials {
   accountId: string;
   accessToken: string;
@@ -521,6 +528,89 @@ export async function getTeamMembersForTeam(
       success: true,
       members,
       total: data.total || members.length,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+    };
+  }
+}
+
+export async function removeTeamMemberForTeam(
+  accountId: string,
+  accessToken: string,
+  memberId: string,
+  cookies?: string
+): Promise<TeamMemberKickResult> {
+  if (!accessToken || !accountId || !memberId) {
+    return {
+      success: false,
+      error: "缺少 Access Token、Account ID 或成员 ID",
+    };
+  }
+
+  const credentials: TeamCredentials = { accountId, accessToken, cookies };
+
+  try {
+    const url = `${CHATGPT_API_BASE}/accounts/${accountId}/users/${memberId}`;
+    const response = await fetch(url, {
+      method: "DELETE",
+      headers: getHeaders(credentials),
+    });
+
+    const status = response.status;
+    const bodyText = await response.text();
+
+    if (!response.ok) {
+      if (looksLikeCloudflareChallenge(bodyText)) {
+        return {
+          success: false,
+          error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+          requiresCookies: true,
+          status,
+        };
+      }
+
+      if (status === 401 || status === 403) {
+        return {
+          success: false,
+          error: "凭据无效或已过期（HTTP 401/403）",
+          status,
+        };
+      }
+
+      let errorMessage = `HTTP ${status}`;
+      try {
+        const errorJson = JSON.parse(bodyText) as Record<string, unknown>;
+        const detail =
+          typeof errorJson.detail === "string" ? errorJson.detail : undefined;
+        const message =
+          typeof errorJson.message === "string" ? errorJson.message : undefined;
+        errorMessage = detail || message || errorMessage;
+      } catch {
+        errorMessage = bodyText.slice(0, 200) || errorMessage;
+      }
+
+      return {
+        success: false,
+        error: errorMessage,
+        status,
+      };
+    }
+
+    if (looksLikeCloudflareChallenge(bodyText)) {
+      return {
+        success: false,
+        error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+        requiresCookies: true,
+        status,
+      };
+    }
+
+    return {
+      success: true,
+      status,
     };
   } catch (error) {
     return {
