@@ -129,11 +129,97 @@ export default function TeamsPage() {
   const [membersTotal, setMembersTotal] = useState<number | null>(null);
   const membersFetchControllerRef = useRef<AbortController | null>(null);
 
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [inviteModalTeam, setInviteModalTeam] = useState<Team | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [inviteError, setInviteError] = useState("");
+  const [inviteSuccess, setInviteSuccess] = useState("");
+
   const [teamValidityById, setTeamValidityById] = useState<
     Record<string, TeamValidityState>
   >({});
 
   const getToken = () => localStorage.getItem("admin_token");
+
+  const openInviteModal = (team: Team) => {
+    setInviteModalTeam(team);
+    setInviteModalOpen(true);
+    setInviteEmail("");
+    setInviteError("");
+    setInviteSuccess("");
+    setInviteSubmitting(false);
+  };
+
+  const closeInviteModal = () => {
+    setInviteModalOpen(false);
+    setInviteModalTeam(null);
+    setInviteEmail("");
+    setInviteError("");
+    setInviteSuccess("");
+    setInviteSubmitting(false);
+  };
+
+  const submitManualInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const team = inviteModalTeam;
+    if (!team) return;
+
+    const token = getToken();
+    if (!token) {
+      router.push("/admin");
+      return;
+    }
+
+    const email = inviteEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setInviteError("邮箱格式无效");
+      return;
+    }
+
+    setInviteSubmitting(true);
+    setInviteError("");
+    setInviteSuccess("");
+
+    try {
+      const res = await fetch(`/api/admin/teams/${team.id}/invite`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email }),
+      });
+
+      if (res.status === 401) {
+        localStorage.removeItem("admin_token");
+        router.push("/admin");
+        return;
+      }
+
+      type ManualInviteApiResponse = {
+        success?: boolean;
+        message?: string;
+        error?: string;
+      };
+
+      const data = (await res
+        .json()
+        .catch(() => ({}))) as Partial<ManualInviteApiResponse>;
+
+      if (res.ok && data.success) {
+        setInviteSuccess(data.message || "邀请已发送成功！");
+        setInviteEmail("");
+        await fetchTeams();
+      } else {
+        setInviteError(data.error || "发送邀请失败");
+      }
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "发送邀请失败");
+    } finally {
+      setInviteSubmitting(false);
+    }
+  };
 
   const checkTeamValidity = useCallback(
     async (team: Team) => {
@@ -949,6 +1035,13 @@ export default function TeamsPage() {
 	                    <td className="px-6 py-4">
 	                      <div className="flex items-center gap-3">
                         <button
+                          onClick={() => openInviteModal(team)}
+                          disabled={!team.isActive || isExpired(team.expiresAt)}
+                          className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white disabled:opacity-50"
+                        >
+                          邀请
+                        </button>
+                        <button
                           onClick={() => checkTeamValidity(team)}
                           disabled={teamValidityById[team.id]?.state === "loading"}
                           className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white disabled:opacity-50"
@@ -997,12 +1090,103 @@ export default function TeamsPage() {
             <li>优先级数字越小，优先使用该团队（0 为最高优先级）</li>
             <li>成员上限设为 0 表示无限制</li>
             <li>设置“到期时间”后，到期的团队将不再接收新邀请（留空表示永不过期）</li>
+            <li>点击“邀请”可指定某个团队手动发送邀请邮件</li>
             <li>点击“检测”可实时检查团队凭据有效性（可能受到 Cloudflare/限流影响）</li>
             <li>点击“同步成员数”可从 ChatGPT API 同步实际成员数量</li>
             <li>禁用的团队不会接收新邀请</li>
           </ul>
         </div>
       </main>
+
+      {/* Manual Invite Modal */}
+      {inviteModalOpen && inviteModalTeam && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={closeInviteModal}
+          />
+          <div className="relative w-full max-w-lg bg-white dark:bg-zinc-800 rounded-2xl shadow-xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-zinc-200 dark:border-zinc-700 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
+                  手动邀请：{inviteModalTeam.name}
+                </h2>
+                <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                  将使用该团队的凭据发送 Team 邀请
+                </div>
+              </div>
+              <button
+                onClick={closeInviteModal}
+                className="px-3 py-1.5 text-sm bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-900 dark:text-white rounded-lg transition"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="p-6">
+              {(inviteModalTeam.maxMembers !== 0 &&
+                inviteModalTeam.currentMembers >= inviteModalTeam.maxMembers) && (
+                <div className="mb-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-4">
+                  <div className="text-sm text-yellow-800 dark:text-yellow-200">
+                    该团队当前已满员（{inviteModalTeam.currentMembers}/
+                    {inviteModalTeam.maxMembers}）。如实际仍有空位，请先“同步成员数”或调整上限。
+                  </div>
+                </div>
+              )}
+
+              <form onSubmit={submitManualInvite} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                    邮箱
+                  </label>
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white"
+                    placeholder="name@example.com"
+                    required
+                    autoFocus
+                  />
+                </div>
+
+                {inviteError && (
+                  <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3">
+                    <div className="text-sm text-red-700 dark:text-red-300">
+                      {inviteError}
+                    </div>
+                  </div>
+                )}
+
+                {inviteSuccess && (
+                  <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl p-3">
+                    <div className="text-sm text-green-700 dark:text-green-300">
+                      {inviteSuccess}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-4">
+                  <button
+                    type="submit"
+                    disabled={inviteSubmitting}
+                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium rounded-lg transition"
+                  >
+                    {inviteSubmitting ? "发送中..." : "发送邀请"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeInviteModal}
+                    className="px-6 py-2 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-900 dark:text-white font-medium rounded-lg transition"
+                  >
+                    取消
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Members Modal */}
       {membersModalOpen && membersModalTeam && (
