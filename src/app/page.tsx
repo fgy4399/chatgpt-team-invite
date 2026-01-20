@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -11,6 +11,32 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [isRedirecting, setIsRedirecting] = useState(false);
+  const [adminHref, setAdminHref] = useState("/admin");
+  const [hasAdminToken, setHasAdminToken] = useState(false);
+
+  const handleAdminClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (
+      event.button !== 0 ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey
+    ) {
+      return;
+    }
+    if (hasAdminToken) {
+      setIsRedirecting(true);
+    }
+  };
+
+  useEffect(() => {
+    const token = localStorage.getItem("admin_token");
+    if (token) {
+      setHasAdminToken(true);
+      setAdminHref("/admin/dashboard");
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,8 +114,13 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-violet-50 via-white to-violet-100 dark:from-zinc-950 dark:via-zinc-950 dark:to-violet-950/40">
-      <div className="mx-auto max-w-6xl px-4 py-10 lg:py-16">
+    <div className="relative min-h-screen bg-linear-to-br from-violet-50 via-white to-violet-100 dark:from-zinc-950 dark:via-zinc-950 dark:to-violet-950/40">
+      <div
+        className={`transition-opacity duration-300 ${
+          isRedirecting ? "opacity-0" : "opacity-100"
+        }`}
+      >
+        <div className="mx-auto max-w-6xl px-4 py-10 lg:py-16">
         <div className="grid gap-8 lg:grid-cols-2 lg:gap-10">
           <div className="flex flex-col justify-center">
             <div className="inline-flex items-center gap-2 text-sm text-violet-800/80 dark:text-violet-200/80">
@@ -153,7 +184,8 @@ export default function Home() {
 
             <div className="mt-8">
               <Link
-                href="/admin"
+                href={adminHref}
+                onClick={handleAdminClick}
                 className="inline-flex items-center gap-2 text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
               >
                 管理员登录
@@ -247,7 +279,16 @@ export default function Home() {
             </form>
           </div>
         </div>
+        </div>
       </div>
+      {isRedirecting && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="flex items-center gap-3 rounded-2xl border border-violet-200/70 bg-white/90 px-4 py-3 text-sm text-zinc-700 shadow-lg dark:border-violet-500/20 dark:bg-zinc-900/80 dark:text-zinc-200">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-violet-600 border-t-transparent dark:border-violet-400 dark:border-t-transparent" />
+            正在进入管理后台...
+          </div>
+        </div>
+      )}
     </div>
   );
 }

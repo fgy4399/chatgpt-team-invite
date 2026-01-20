@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -10,6 +10,20 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isRedirecting, setIsRedirecting] = useState(false);
+  const redirectDelayMs = 180;
+
+  useEffect(() => {
+    const token = localStorage.getItem("admin_token");
+    if (!token) {
+      return;
+    }
+    setIsRedirecting(true);
+    const timer = window.setTimeout(() => {
+      router.replace("/admin/dashboard");
+    }, redirectDelayMs);
+    return () => window.clearTimeout(timer);
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,7 +42,10 @@ export default function AdminLoginPage() {
       if (res.ok && data.token) {
         localStorage.setItem("admin_token", data.token);
         localStorage.setItem("admin_username", data.username);
-        router.push("/admin/dashboard");
+        setIsRedirecting(true);
+        window.setTimeout(() => {
+          router.push("/admin/dashboard");
+        }, redirectDelayMs);
       } else {
         setError(data.error || "登录失败");
       }
@@ -40,8 +57,12 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-linear-to-b from-violet-50 via-white to-violet-100 dark:from-zinc-950 dark:via-zinc-950 dark:to-violet-950/40 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-violet-200/60 dark:border-violet-500/20 bg-white/80 dark:bg-zinc-900/60 backdrop-blur shadow-xl p-8">
+    <div className="relative flex min-h-screen items-center justify-center bg-linear-to-b from-violet-50 via-white to-violet-100 dark:from-zinc-950 dark:via-zinc-950 dark:to-violet-950/40 p-4">
+      <div
+        className={`w-full max-w-md rounded-2xl border border-violet-200/60 dark:border-violet-500/20 bg-white/80 dark:bg-zinc-900/60 backdrop-blur shadow-xl p-8 transition-opacity duration-300 ${
+          isRedirecting ? "opacity-0" : "opacity-100"
+        }`}
+      >
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-zinc-900 dark:text-white mb-2">
             管理员登录
@@ -113,6 +134,14 @@ export default function AdminLoginPage() {
           </Link>
         </div>
       </div>
+      {isRedirecting && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="flex items-center gap-3 rounded-2xl border border-violet-200/70 bg-white/90 px-4 py-3 text-sm text-zinc-700 shadow-lg dark:border-violet-500/20 dark:bg-zinc-900/80 dark:text-zinc-200">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-violet-600 border-t-transparent dark:border-violet-400 dark:border-t-transparent" />
+            正在进入后台...
+          </div>
+        </div>
+      )}
     </div>
   );
 }
