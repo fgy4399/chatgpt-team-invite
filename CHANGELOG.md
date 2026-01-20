@@ -12,3 +12,9 @@
 - Admin member removal API endpoint for teams.
 ### Changed
 - Members modal now provides a "kick" action with error feedback.
+
+## [1.0.4] - 2026-01-21
+### Added
+- Per-team member count sync endpoint.
+### Changed
+- Team list now offers a per-team sync action and updates counts after member removal.
