@@ -1176,43 +1176,43 @@ export default function TeamsPage() {
                       {team._count.invitations}
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           onClick={() => openInviteModal(team)}
                           disabled={!team.isActive || isExpired(team.expiresAt)}
-                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-orange-700 hover:text-orange-900 hover:bg-white dark:text-orange-300 dark:hover:text-orange-200 dark:hover:bg-zinc-900/40 transition-colors disabled:opacity-50"
+                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-orange-700 hover:text-orange-900 hover:bg-white dark:text-orange-300 dark:hover:text-orange-200 dark:hover:bg-zinc-900/40 transition-colors disabled:opacity-50 whitespace-nowrap"
                         >
                           邀请
                         </button>
                         <button
                           onClick={() => handleSyncTeam(team)}
                           disabled={Boolean(syncingTeamIds[team.id])}
-                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-emerald-700 hover:text-emerald-900 hover:bg-white dark:text-emerald-300 dark:hover:text-emerald-200 dark:hover:bg-zinc-900/40 transition-colors disabled:opacity-50"
+                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-emerald-700 hover:text-emerald-900 hover:bg-white dark:text-emerald-300 dark:hover:text-emerald-200 dark:hover:bg-zinc-900/40 transition-colors disabled:opacity-50 whitespace-nowrap"
                         >
                           {syncingTeamIds[team.id] ? "同步中..." : "同步"}
                         </button>
                         <button
                           onClick={() => checkTeamValidity(team)}
                           disabled={teamValidityById[team.id]?.state === "loading"}
-                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-zinc-700 hover:text-zinc-900 hover:bg-white dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900/40 transition-colors disabled:opacity-50"
+                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-zinc-700 hover:text-zinc-900 hover:bg-white dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900/40 transition-colors disabled:opacity-50 whitespace-nowrap"
                         >
                           检测
                         </button>
                         <button
                           onClick={() => handleViewMembers(team)}
-                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-zinc-700 hover:text-zinc-900 hover:bg-white dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900/40 transition-colors"
+                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-zinc-700 hover:text-zinc-900 hover:bg-white dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900/40 transition-colors whitespace-nowrap"
                         >
                           查看成员
                         </button>
                         <button
                           onClick={() => handleStartEdit(team)}
-                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-violet-700 hover:text-violet-900 hover:bg-white dark:text-violet-300 dark:hover:text-violet-200 dark:hover:bg-zinc-900/40 transition-colors"
+                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-violet-700 hover:text-violet-900 hover:bg-white dark:text-violet-300 dark:hover:text-violet-200 dark:hover:bg-zinc-900/40 transition-colors whitespace-nowrap"
                         >
                           编辑
                         </button>
                         <button
                           onClick={() => handleDelete(team.id)}
-                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-red-700 hover:text-red-900 hover:bg-white dark:text-red-300 dark:hover:text-red-200 dark:hover:bg-zinc-900/40 transition-colors"
+                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-red-700 hover:text-red-900 hover:bg-white dark:text-red-300 dark:hover:text-red-200 dark:hover:bg-zinc-900/40 transition-colors whitespace-nowrap"
                         >
                           删除
                         </button>
