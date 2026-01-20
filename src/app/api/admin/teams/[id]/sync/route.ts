@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getTokenFromRequest, verifyToken } from "@/lib/auth";
-import { removeTeamMemberForTeam } from "@/lib/chatgpt";
+import { getTeamMembersForTeam } from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
-// DELETE /api/admin/teams/[id]/members/[memberId] - 移除指定团队成员
-export async function DELETE(
+// POST /api/admin/teams/[id]/sync - Sync single team member count
+export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string; memberId: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = getTokenFromRequest(req);
@@ -25,12 +25,9 @@ export async function DELETE(
       );
     }
 
-    const { id, memberId } = await params;
-    if (!id || !memberId) {
-      return NextResponse.json(
-        { error: "缺少团队 ID 或成员 ID" },
-        { status: 400 }
-      );
+    const { id } = await params;
+    if (!id) {
+      return NextResponse.json({ error: "缺少团队 ID" }, { status: 400 });
     }
 
     const team = await prisma.team.findUnique({
@@ -41,7 +38,6 @@ export async function DELETE(
         accountId: true,
         accessToken: true,
         cookies: true,
-        currentMembers: true,
       },
     });
 
@@ -49,24 +45,26 @@ export async function DELETE(
       return NextResponse.json({ error: "团队不存在" }, { status: 404 });
     }
 
-    const result = await removeTeamMemberForTeam(
+    const membersResult = await getTeamMembersForTeam(
       team.accountId,
       team.accessToken,
-      memberId,
       team.cookies || undefined
     );
 
-    if (!result.success) {
+    if (!membersResult.success) {
       return NextResponse.json(
-        {
-          error: result.error || "踢出成员失败",
-          requiresCookies: result.requiresCookies,
-        },
-        { status: result.status ?? 502 }
+        { error: membersResult.error || "同步成员数失败" },
+        { status: 502 }
       );
     }
 
-    const nextCount = Math.max(team.currentMembers - 1, 0);
+    const nextCount =
+      typeof membersResult.total === "number"
+        ? membersResult.total
+        : membersResult.members
+          ? membersResult.members.length
+          : 0;
+
     await prisma.team.update({
       where: { id: team.id },
       data: { currentMembers: nextCount },
@@ -74,7 +72,7 @@ export async function DELETE(
 
     return NextResponse.json({ success: true, currentMembers: nextCount });
   } catch (error) {
-    logger.error("Teams", "Remove team member error:", error);
-    return NextResponse.json({ error: "踢出成员失败" }, { status: 500 });
+    logger.error("Teams", "Sync team members error:", error);
+    return NextResponse.json({ error: "同步成员数失败" }, { status: 500 });
   }
 }

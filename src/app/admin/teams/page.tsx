@@ -118,6 +118,9 @@ export default function TeamsPage() {
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [inviteError, setInviteError] = useState("");
   const [inviteSuccess, setInviteSuccess] = useState("");
+  const [syncingTeamIds, setSyncingTeamIds] = useState<Record<string, boolean>>(
+    {}
+  );
 
   const [teamValidityById, setTeamValidityById] = useState<
     Record<string, TeamValidityState>
@@ -427,6 +430,69 @@ export default function TeamsPage() {
     }
   };
 
+  const handleSyncTeam = async (team: Team) => {
+    const token = getToken();
+    if (!token) return;
+
+    setSyncingTeamIds((prev) => ({ ...prev, [team.id]: true }));
+
+    try {
+      const res = await fetch(`/api/admin/teams/${team.id}/sync`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.status === 401) {
+        localStorage.removeItem("admin_token");
+        router.push("/admin");
+        return;
+      }
+
+      type SyncTeamApiResponse = {
+        success?: boolean;
+        currentMembers?: number;
+        error?: string;
+      };
+
+      const data = (await res
+        .json()
+        .catch(() => ({}))) as Partial<SyncTeamApiResponse>;
+
+      if (!res.ok) {
+        alert(data.error || "同步成员数失败");
+        return;
+      }
+
+      const nextCount =
+        typeof data.currentMembers === "number"
+          ? data.currentMembers
+          : team.currentMembers;
+
+      setTeams((prev) =>
+        prev.map((item) =>
+          item.id === team.id ? { ...item, currentMembers: nextCount } : item
+        )
+      );
+      setInviteModalTeam((prev) =>
+        prev && prev.id === team.id
+          ? { ...prev, currentMembers: nextCount }
+          : prev
+      );
+      setMembersModalTeam((prev) =>
+        prev && prev.id === team.id
+          ? { ...prev, currentMembers: nextCount }
+          : prev
+      );
+      setMembersTotal((prev) =>
+        membersModalTeam?.id === team.id && prev !== null ? nextCount : prev
+      );
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "同步成员数失败");
+    } finally {
+      setSyncingTeamIds((prev) => ({ ...prev, [team.id]: false }));
+    }
+  };
+
   const handleAddTeam = async (e: React.FormEvent) => {
     e.preventDefault();
     const token = getToken();
@@ -608,6 +674,7 @@ export default function TeamsPage() {
         success?: boolean;
         error?: string;
         requiresCookies?: boolean;
+        currentMembers?: number;
       };
 
       const data = (await res
@@ -619,9 +686,29 @@ export default function TeamsPage() {
         return;
       }
 
+      const nextCount =
+        typeof data.currentMembers === "number"
+          ? data.currentMembers
+          : Math.max(team.currentMembers - 1, 0);
+
       setMembers((prev) => prev.filter((item) => item.id !== member.id));
       setMembersTotal((prev) =>
         typeof prev === "number" ? Math.max(prev - 1, 0) : prev
+      );
+      setTeams((prev) =>
+        prev.map((item) =>
+          item.id === team.id ? { ...item, currentMembers: nextCount } : item
+        )
+      );
+      setMembersModalTeam((prev) =>
+        prev && prev.id === team.id
+          ? { ...prev, currentMembers: nextCount }
+          : prev
+      );
+      setInviteModalTeam((prev) =>
+        prev && prev.id === team.id
+          ? { ...prev, currentMembers: nextCount }
+          : prev
       );
     } catch (error) {
       setKickError(
@@ -770,7 +857,7 @@ export default function TeamsPage() {
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
               )}
-              {syncing ? "同步中..." : "同步成员数"}
+              {syncing ? "同步中..." : "同步全部"}
             </button>
             <button
               onClick={() => setShowAddForm(true)}
@@ -1098,6 +1185,13 @@ export default function TeamsPage() {
                           邀请
                         </button>
                         <button
+                          onClick={() => handleSyncTeam(team)}
+                          disabled={Boolean(syncingTeamIds[team.id])}
+                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-emerald-700 hover:text-emerald-900 hover:bg-white dark:text-emerald-300 dark:hover:text-emerald-200 dark:hover:bg-zinc-900/40 transition-colors disabled:opacity-50"
+                        >
+                          {syncingTeamIds[team.id] ? "同步中..." : "同步"}
+                        </button>
+                        <button
                           onClick={() => checkTeamValidity(team)}
                           disabled={teamValidityById[team.id]?.state === "loading"}
                           className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-zinc-700 hover:text-zinc-900 hover:bg-white dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900/40 transition-colors disabled:opacity-50"
@@ -1148,7 +1242,7 @@ export default function TeamsPage() {
             <li>到期时间会在添加团队时自动从 ChatGPT 订阅信息获取，到期后团队将不再接收新邀请</li>
             <li>点击“邀请”可指定某个团队手动发送邀请邮件</li>
             <li>点击“检测”可实时检查团队凭据有效性（可能受到 Cloudflare/限流影响）</li>
-            <li>点击“同步成员数”可从 ChatGPT API 同步实际成员数量</li>
+            <li>列表支持单团队“同步”，必要时再用顶部“同步全部”</li>
             <li>禁用的团队不会接收新邀请</li>
           </ul>
         </div>
@@ -1191,7 +1285,7 @@ export default function TeamsPage() {
                 <div className="mb-4 bg-yellow-50/80 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-4">
                   <div className="text-sm text-yellow-800 dark:text-yellow-200">
                     该团队当前已满员（{inviteModalTeam.currentMembers}/
-                    {inviteModalTeam.maxMembers}）。如实际仍有空位，请先“同步成员数”或调整上限。
+                    {inviteModalTeam.maxMembers}）。如实际仍有空位，请先在列表中为该团队点击“同步”或调整上限。
                   </div>
                 </div>
               )}
