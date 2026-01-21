@@ -794,8 +794,8 @@ export default function TeamsPage() {
       );
     } else if (percentage >= 80) {
       return (
-        <span className="px-2 py-1 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300">
-          即将满员
+        <span className="px-2 py-1 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300 whitespace-pre-line text-center leading-4">
+          {"即将\n满员"}
         </span>
       );
     } else {
