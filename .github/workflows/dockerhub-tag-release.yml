@@ -1,22 +1,45 @@
-name: DockerHub 镜像发布（仅 Tag 触发）
+name: DockerHub 镜像发布（Tag / 手动）
 
 on:
   push:
     tags:
       - "*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要构建的 git ref（tag/branch/commit），例如 v1.0.6"
+        required: true
+        default: "v1.0.6"
+      image_tag:
+        description: "推送到 DockerHub 的镜像 tag（例如 v1.0.6）"
+        required: true
+        default: "v1.0.6"
+      push_latest:
+        description: "是否同时推送 latest（手动构建默认不推，避免误伤）"
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   build-and-push:
     name: 构建并推送到 DockerHub
-    # Tag 推送时执行（包含强推更新已有 Tag）；跳过 Tag 删除事件（deleted=true）。
-    if: ${{ github.event.deleted != true }}
+    # 自动：仅新建 Tag 时触发；手动：随时可补构建（例如补历史 Tag 的多架构镜像）。
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.created == true }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
+    env:
+      IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/chatgpt-team-invite
+      CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+      IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || github.ref_name }}
+      INPUT_PUSH_LATEST: ${{ github.event_name == 'workflow_dispatch' && inputs.push_latest || 'false' }}
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: 设置 QEMU（多架构）
         uses: docker/setup-qemu-action@v3
@@ -30,14 +53,19 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: 生成镜像元数据（Tag + latest）
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/chatgpt-team-invite
-          tags: |
-            type=ref,event=tag
-            type=raw,value=latest
+      - name: 生成镜像标签
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "tags<<EOF"
+            echo "${IMAGE_NAME}:${IMAGE_TAG}"
+            if [[ "${GITHUB_EVENT_NAME}" == "push" ]] || [[ "${INPUT_PUSH_LATEST}" == "true" ]]; then
+              echo "${IMAGE_NAME}:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: 构建并推送镜像
         uses: docker/build-push-action@v6
@@ -46,7 +74,6 @@ jobs:
           file: Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
