@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { getTeamEntitlementForTeam, getTeamMembersForTeam } from "@/lib/chatgpt";
+import { getTeamMembersForTeam, getTeamSubscriptionForTeam } from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -59,54 +59,41 @@ export const POST = withAuth(async (req: NextRequest) => {
     }
 
     let expiresAtValue: Date | null = null;
-    const entitlementResult = await getTeamEntitlementForTeam(
+    const subscriptionResult = await getTeamSubscriptionForTeam(
       accountId,
       accessToken,
       cookies
     );
 
-    if (!entitlementResult.success || !entitlementResult.entitlement) {
+    if (!subscriptionResult.success || !subscriptionResult.subscription) {
       return NextResponse.json(
         {
           error:
-            entitlementResult.error ||
+            subscriptionResult.error ||
             "无法自动获取到期时间，请检查凭据或配置 Cookies",
         },
         { status: 400 }
       );
     }
 
-    if (!entitlementResult.entitlement.hasActiveSubscription) {
-      return NextResponse.json(
-        { error: "该账号当前无有效订阅，无法自动获取到期时间" },
-        { status: 400 }
-      );
-    }
-
-    if (
-      entitlementResult.entitlement.planType &&
-      entitlementResult.entitlement.planType !== "team"
-    ) {
+    const subscription = subscriptionResult.subscription;
+    if (subscription.plan_type && subscription.plan_type !== "team") {
       return NextResponse.json(
         {
-          error: `该 Account ID 不是 Team 工作区（plan_type=${entitlementResult.entitlement.planType}），请使用 Team 的 Account ID`,
+          error: `该 Account ID 不是 Team 工作区（plan_type=${subscription.plan_type}），请使用 Team 的 Account ID`,
         },
         { status: 400 }
       );
     }
 
     const expiresIso =
-      typeof entitlementResult.entitlement.expiresAt === "string" &&
-      entitlementResult.entitlement.expiresAt
-        ? entitlementResult.entitlement.expiresAt
-        : typeof entitlementResult.entitlement.renewsAt === "string" &&
-            entitlementResult.entitlement.renewsAt
-          ? entitlementResult.entitlement.renewsAt
-          : null;
+      typeof subscription.active_until === "string" && subscription.active_until
+        ? subscription.active_until
+        : null;
 
     if (!expiresIso) {
       return NextResponse.json(
-        { error: "未获取到订阅到期时间字段，请检查凭据或配置 Cookies" },
+        { error: "未获取到订阅到期时间字段（active_until），请检查凭据或配置 Cookies" },
         { status: 400 }
       );
     }

@@ -1155,8 +1155,11 @@ export default function TeamsPage() {
 	                                : "text-zinc-600 dark:text-zinc-300"
 	                            }`}
 	                          >
-	                            {new Date(team.expiresAt).toLocaleString()}
-	                          </span>
+		                            {new Date(team.expiresAt).toLocaleString("zh-CN", {
+		                              timeZone: "Asia/Shanghai",
+		                              hour12: false,
+		                            })}
+		                          </span>
 	                          {isExpired(team.expiresAt) && (
 	                            <span className="inline-block w-fit px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300">
 	                              已过期
