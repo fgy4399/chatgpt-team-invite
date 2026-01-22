@@ -1104,7 +1104,7 @@ export default function TeamsPage() {
             <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">团队列表</h2>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full table-auto">
               <thead className="bg-violet-50/70 dark:bg-violet-500/10">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide whitespace-nowrap">团队名称</th>
@@ -1117,7 +1117,7 @@ export default function TeamsPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide whitespace-nowrap">操作</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800">
+              <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800 whitespace-nowrap">
                 {teams.map((team) => (
                   <tr key={team.id} className="hover:bg-violet-50/50 dark:hover:bg-violet-500/10 transition-colors">
                     <td className="px-6 py-4">
