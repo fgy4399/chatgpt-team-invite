@@ -1104,17 +1104,17 @@ export default function TeamsPage() {
             <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">团队列表</h2>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full table-fixed">
+            <table className="w-full">
               <thead className="bg-violet-50/70 dark:bg-violet-500/10">
                 <tr>
-                  <th className="w-[180px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">团队名称</th>
-                  <th className="w-[100px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">成员/上限</th>
-                  <th className="w-[80px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">状态</th>
-                  <th className="w-[140px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">有效性</th>
-                  <th className="w-[160px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">到期时间</th>
-                  <th className="w-[70px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">优先级</th>
-                  <th className="w-[70px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">邀请数</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">操作</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide whitespace-nowrap">团队名称</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide whitespace-nowrap">成员/上限</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide whitespace-nowrap">状态</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide whitespace-nowrap min-w-[120px]">有效性</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide whitespace-nowrap">到期时间</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide whitespace-nowrap">优先级</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide whitespace-nowrap">邀请数</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide whitespace-nowrap">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800">
@@ -1144,37 +1144,37 @@ export default function TeamsPage() {
                         {team.isActive ? "已启用" : "已禁用"}
                       </button>
                     </td>
-                    <td className="px-6 py-4">{renderTeamValidity(team)}</td>
-	                    <td className="px-6 py-4">
-	                      {team.expiresAt ? (
-	                        <div className="flex flex-col gap-1">
-	                          <span
-	                            className={`text-sm ${
-	                              isExpired(team.expiresAt)
-	                                ? "text-red-600 dark:text-red-400"
-	                                : "text-zinc-600 dark:text-zinc-300"
-	                            }`}
-	                          >
-		                            {new Date(team.expiresAt).toLocaleString("zh-CN", {
-		                              timeZone: "Asia/Shanghai",
-		                              hour12: false,
-		                            })}
-		                          </span>
-	                          {isExpired(team.expiresAt) && (
-	                            <span className="inline-block w-fit px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300">
-	                              已过期
-	                            </span>
-	                          )}
-	                        </div>
-	                      ) : (
-	                        <span className="text-sm text-zinc-600 dark:text-zinc-300">
-	                          永不过期
-	                        </span>
-	                      )}
-	                    </td>
-	                    <td className="px-6 py-4 text-sm text-zinc-600 dark:text-zinc-400">
-	                      {team.priority}
-	                    </td>
+                    <td className="px-6 py-4 min-w-[120px]">{renderTeamValidity(team)}</td>
+                    <td className="px-6 py-4">
+                      {team.expiresAt ? (
+                        <div className="flex flex-col gap-1">
+                          <span
+                            className={`text-sm ${
+                              isExpired(team.expiresAt)
+                                ? "text-red-600 dark:text-red-400"
+                                : "text-zinc-600 dark:text-zinc-300"
+                            }`}
+                          >
+                            {new Date(team.expiresAt).toLocaleString("zh-CN", {
+                              timeZone: "Asia/Shanghai",
+                              hour12: false,
+                            })}
+                          </span>
+                          {isExpired(team.expiresAt) && (
+                            <span className="inline-block w-fit px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300">
+                              已过期
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-zinc-600 dark:text-zinc-300">
+                          永不过期
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-zinc-600 dark:text-zinc-400">
+                      {team.priority}
+                    </td>
                     <td className="px-6 py-4 text-sm text-zinc-600 dark:text-zinc-400">
                       {team._count.invitations}
                     </td>
