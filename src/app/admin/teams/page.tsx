@@ -1104,16 +1104,16 @@ export default function TeamsPage() {
             <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">团队列表</h2>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full table-fixed">
               <thead className="bg-violet-50/70 dark:bg-violet-500/10">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">团队名称</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">成员/上限</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">状态</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">有效性</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">到期时间</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">优先级</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">邀请数</th>
+                  <th className="w-[180px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">团队名称</th>
+                  <th className="w-[100px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">成员/上限</th>
+                  <th className="w-[80px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">状态</th>
+                  <th className="w-[140px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">有效性</th>
+                  <th className="w-[160px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">到期时间</th>
+                  <th className="w-[70px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">优先级</th>
+                  <th className="w-[70px] px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">邀请数</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">操作</th>
                 </tr>
               </thead>
@@ -1121,8 +1121,8 @@ export default function TeamsPage() {
                 {teams.map((team) => (
                   <tr key={team.id} className="hover:bg-violet-50/50 dark:hover:bg-violet-500/10 transition-colors">
                     <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-zinc-900 dark:text-white">{team.name}</div>
-                      <div className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{team.accountId.slice(0, 8)}...</div>
+                      <div className="text-sm font-medium text-zinc-900 dark:text-white truncate" title={team.name}>{team.name}</div>
+                      <div className="text-xs text-zinc-500 dark:text-zinc-400 font-mono truncate" title={team.accountId}>{team.accountId.slice(0, 8)}...</div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">

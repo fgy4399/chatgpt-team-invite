@@ -88,7 +88,7 @@ docker compose up -d
 docker compose run --rm app npx --no-install prisma migrate deploy
 ```
 
-## DockerHub 镜像自动发布（仅 Tag 触发）
+## DockerHub 镜像自动发布（Tag / 手动）
 
 项目已内置 GitHub Actions 工作流：`.github/workflows/dockerhub-tag-release.yml`。
 
@@ -102,6 +102,11 @@ docker compose run --rm app npx --no-install prisma migrate deploy
 - `${DOCKERHUB_USERNAME}/chatgpt-team-invite:v1.0.0`
 - `${DOCKERHUB_USERNAME}/chatgpt-team-invite:latest`
 
+如需为历史 Tag 补构建（例如补 `v1.0.6` 的 `arm64` 镜像），可以在 GitHub Actions 中手动运行该工作流，并指定：
+- `ref`：要检出的 git ref（例如 `v1.0.6`）
+- `image_tag`：要推送的镜像 tag（例如 `v1.0.6`）
+- `push_latest`：是否同时推送 `latest`（手动补构建默认不推，避免误伤）
+
 ## 常见问题（Troubleshooting）
 
 - **Docker 镜像未更新 / 使用了旧版本**：`docker compose pull && docker compose up -d`
@@ -113,6 +118,12 @@ docker compose run --rm app npx --no-install prisma migrate deploy
 - 将服务放在 HTTPS 与反向代理之后（如 Nginx/Caddy），避免明文传输敏感信息
 
 ## 更新日志（Changelog）
+
+### [1.0.7] - 2026-01-22
+#### 变更
+- DockerHub 镜像构建支持多架构（`linux/amd64` + `linux/arm64`）。
+- DockerHub 镜像发布工作流支持手动触发（`workflow_dispatch`），用于补构建指定 ref/tag 的镜像；手动触发默认不推送 `latest`。
+- 管理后台团队列表：表格固定布局 + 列宽，团队名与账号 ID 文本截断展示（`truncate` + `title`）。
 
 ### [1.0.5] - 2026-01-22
 #### 变更
