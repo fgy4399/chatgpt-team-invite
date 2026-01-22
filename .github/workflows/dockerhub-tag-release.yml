@@ -8,8 +8,8 @@ on:
 jobs:
   build-and-push:
     name: 构建并推送到 DockerHub
-    # 仅在“创建新 Tag”时执行；避免对已有 Tag 的重复推送/覆盖触发发布。
-    if: ${{ github.event.created == true }}
+    # Tag 推送时执行（包含强推更新已有 Tag）；跳过 Tag 删除事件（deleted=true）。
+    if: ${{ github.event.deleted != true }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -17,6 +17,9 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+
+      - name: 设置 QEMU（多架构）
+        uses: docker/setup-qemu-action@v3
 
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -42,6 +45,7 @@ jobs:
           context: .
           file: Dockerfile
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
