@@ -69,10 +69,18 @@ npm run start
 项目已包含 `docker-compose.yml`（默认使用持久化 SQLite：`./docker-data/app.db`）。
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
+说明（以 `docker-compose.yml` 为准）：
+- 默认拉取并运行镜像：`fgy4399/chatgpt-team-invite:latest`
+- SQLite 数据文件持久化位置：`./docker-data/app.db`（容器内映射为 `/data/app.db`）
+- 默认会在容器启动时自动执行迁移：`RUN_MIGRATIONS=1`（如需关闭可改为 `0`）
+
 首次运行前请务必修改 `docker-compose.yml` 中的敏感配置（例如 `JWT_SECRET`、`ADMIN_PASSWORD`），或自行改造成 `env_file`/变量注入方式。
+
+如果你需要使用自己构建/发布的镜像，请直接修改 `docker-compose.yml` 里的 `image:`（例如替换为你自己的 DockerHub 仓库与 tag）。
 
 仅运行迁移（可选）：
 
@@ -80,9 +88,23 @@ docker compose up -d --build
 docker compose run --rm app npx --no-install prisma migrate deploy
 ```
 
+## DockerHub 镜像自动发布（仅 Tag 触发）
+
+项目已内置 GitHub Actions 工作流：`.github/workflows/dockerhub-tag-release.yml`。
+
+注意：该工作流只负责“构建并推送镜像”，不会自动修改 `docker-compose.yml`；如需使用你自己发布的镜像，请手动调整 compose 中的 `image:`。
+
+在 GitHub 仓库的 Secrets 中配置：
+- `DOCKERHUB_USERNAME`：DockerHub 用户名/组织名
+- `DOCKERHUB_TOKEN`：DockerHub Access Token（推荐）或密码
+
+当你推送一个新的 git tag（例如 `v1.0.0`）时，会自动构建并推送两份镜像标签：
+- `${DOCKERHUB_USERNAME}/chatgpt-team-invite:v1.0.0`
+- `${DOCKERHUB_USERNAME}/chatgpt-team-invite:latest`
+
 ## 常见问题（Troubleshooting）
 
-- **Docker 构建失败 / 使用了旧缓存**：`docker compose build --no-cache && docker compose up -d`
+- **Docker 镜像未更新 / 使用了旧版本**：`docker compose pull && docker compose up -d`
 - **管理员登录提示“登录尝试过于频繁”**：触发了限流/锁定策略，等待一段时间后再试
 
 ## 安全提示
