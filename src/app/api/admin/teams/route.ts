@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { getTeamMembersForTeam, getTeamSubscriptionForTeam } from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
+import { hasSessionTokenCookie, refreshAccessTokenWithCookies } from "@/lib/teamAccessToken";
 
 export const runtime = "nodejs";
 
@@ -58,12 +59,48 @@ export const POST = withAuth(async (req: NextRequest) => {
       );
     }
 
+    // 强制要求 Cookies，用于自动刷新 Access Token
+    const normalizedCookies = typeof cookies === "string" ? cookies.trim() : "";
+    if (!normalizedCookies) {
+      return NextResponse.json(
+        { error: "Cookies 为必填项，用于自动刷新 Access Token" },
+        { status: 400 }
+      );
+    }
+
+    if (!hasSessionTokenCookie(normalizedCookies)) {
+      return NextResponse.json(
+        { error: "Cookies 缺少 Session Token（__Secure-next-auth.session-token）" },
+        { status: 400 }
+      );
+    }
+
+    let normalizedAccessToken = accessToken.trim();
+    if (!normalizedAccessToken) {
+      return NextResponse.json(
+        { error: "Access Token 不能为空" },
+        { status: 400 }
+      );
+    }
+
     let expiresAtValue: Date | null = null;
-    const subscriptionResult = await getTeamSubscriptionForTeam(
+    let subscriptionResult = await getTeamSubscriptionForTeam(
       accountId,
-      accessToken,
-      cookies
+      normalizedAccessToken,
+      normalizedCookies
     );
+
+    if (!subscriptionResult.success && (subscriptionResult.status === 401 || subscriptionResult.status === 403)) {
+      const refreshed = await refreshAccessTokenWithCookies(normalizedCookies);
+      if (refreshed.success && refreshed.accessToken) {
+        normalizedAccessToken = refreshed.accessToken;
+        subscriptionResult = await getTeamSubscriptionForTeam(
+          accountId,
+          normalizedAccessToken,
+          normalizedCookies
+        );
+      }
+    }
 
     if (!subscriptionResult.success || !subscriptionResult.subscription) {
       return NextResponse.json(
@@ -129,7 +166,11 @@ export const POST = withAuth(async (req: NextRequest) => {
     // First fetch actual member count from ChatGPT API
     let currentMembers = 0;
     try {
-      const membersResult = await getTeamMembersForTeam(accountId, accessToken, cookies);
+      const membersResult = await getTeamMembersForTeam(
+        accountId,
+        normalizedAccessToken,
+        normalizedCookies
+      );
       if (membersResult.success && membersResult.total !== undefined) {
         currentMembers = membersResult.total;
       } else if (membersResult.success && membersResult.members) {
@@ -144,8 +185,8 @@ export const POST = withAuth(async (req: NextRequest) => {
       data: {
         name,
         accountId,
-        accessToken,
-        cookies: cookies || null,
+        accessToken: normalizedAccessToken,
+        cookies: normalizedCookies,
         maxMembers: maxMembers || 0,
         currentMembers,
         expiresAt: expiresAtValue,
@@ -173,6 +214,37 @@ export const PUT = withAuth(async (req: NextRequest) => {
       return NextResponse.json({ error: "缺少团队 ID" }, { status: 400 });
     }
 
+    // 更新时若传入 Cookies，也必须包含 Session Token
+    let cookiesPatch: string | undefined;
+    if (cookies !== undefined) {
+      const normalized = typeof cookies === "string" ? cookies.trim() : "";
+      if (!normalized) {
+        return NextResponse.json(
+          { error: "Cookies 不能为空，请提供可用于自动刷新的完整 Cookies" },
+          { status: 400 }
+        );
+      }
+      if (!hasSessionTokenCookie(normalized)) {
+        return NextResponse.json(
+          { error: "Cookies 缺少 Session Token（__Secure-next-auth.session-token）" },
+          { status: 400 }
+        );
+      }
+      cookiesPatch = normalized;
+    }
+
+    let accessTokenPatch: string | undefined;
+    if (accessToken !== undefined) {
+      const normalized = typeof accessToken === "string" ? accessToken.trim() : "";
+      if (!normalized) {
+        return NextResponse.json(
+          { error: "Access Token 不能为空" },
+          { status: 400 }
+        );
+      }
+      accessTokenPatch = normalized;
+    }
+
     let expiresAtPatch: Date | null | undefined = undefined;
     if (expiresAt !== undefined) {
       if (expiresAt === null || expiresAt === "") {
@@ -194,8 +266,8 @@ export const PUT = withAuth(async (req: NextRequest) => {
       data: {
         ...(name !== undefined && { name }),
         ...(accountId !== undefined && { accountId }),
-        ...(accessToken !== undefined && { accessToken }),
-        ...(cookies !== undefined && { cookies }),
+        ...(accessTokenPatch !== undefined && { accessToken: accessTokenPatch }),
+        ...(cookiesPatch !== undefined && { cookies: cookiesPatch }),
         ...(maxMembers !== undefined && { maxMembers }),
         ...(expiresAtPatch !== undefined && { expiresAt: expiresAtPatch }),
         ...(priority !== undefined && { priority }),

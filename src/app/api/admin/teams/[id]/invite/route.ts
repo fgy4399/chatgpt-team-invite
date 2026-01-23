@@ -4,6 +4,7 @@ import { getTokenFromRequest, verifyToken } from "@/lib/auth";
 import { sendTeamInviteForTeam } from "@/lib/chatgpt";
 import { isValidEmail } from "@/lib/utils";
 import { logger } from "@/lib/logger";
+import { withTeamTokenRefresh } from "@/lib/teamAccessToken";
 
 export const runtime = "nodejs";
 
@@ -80,16 +81,25 @@ export async function POST(
       );
     }
 
-    const result = await sendTeamInviteForTeam(email, {
-      accountId: team.accountId,
-      accessToken: team.accessToken,
-      cookies: team.cookies || undefined,
-    });
+    if (!team.cookies) {
+      return NextResponse.json(
+        { error: "团队未配置 Cookies，无法自动刷新 Access Token" },
+        { status: 400 }
+      );
+    }
+
+    const result = await withTeamTokenRefresh(team, (credentials) =>
+      sendTeamInviteForTeam(email, {
+        accountId: credentials.accountId,
+        accessToken: credentials.accessToken,
+        cookies: credentials.cookies,
+      })
+    );
 
     if (!result.success) {
       return NextResponse.json(
         { error: result.error || "发送邀请失败" },
-        { status: 502 }
+        { status: result.status ?? 502 }
       );
     }
 

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getTokenFromRequest, verifyToken } from "@/lib/auth";
 import { getTeamSubscriptionForTeam } from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
+import { withTeamTokenRefresh } from "@/lib/teamAccessToken";
 
 export const runtime = "nodejs";
 
@@ -50,13 +51,25 @@ export async function GET(
       return NextResponse.json({ error: "团队不存在" }, { status: 404 });
     }
 
+    if (!team.cookies) {
+      return NextResponse.json(
+        {
+          error: "团队未配置 Cookies，无法自动刷新 Access Token",
+          requiresCookies: true,
+        },
+        { status: 400 }
+      );
+    }
+
     const checkedAt = new Date();
     const expired = team.expiresAt ? checkedAt > team.expiresAt : false;
 
-    const subscriptionResult = await getTeamSubscriptionForTeam(
-      team.accountId,
-      team.accessToken,
-      team.cookies || undefined
+    const subscriptionResult = await withTeamTokenRefresh(team, (credentials) =>
+      getTeamSubscriptionForTeam(
+        credentials.accountId,
+        credentials.accessToken,
+        credentials.cookies
+      )
     );
 
     const local = {
@@ -103,4 +116,3 @@ export async function GET(
     );
   }
 }
-

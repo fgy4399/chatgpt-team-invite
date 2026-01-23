@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getTokenFromRequest, verifyToken } from "@/lib/auth";
 import { getAllTeamMembersForTeam } from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
+import { withTeamTokenRefresh } from "@/lib/teamAccessToken";
 
 export const runtime = "nodejs";
 
@@ -45,16 +46,25 @@ export async function GET(
       return NextResponse.json({ error: "团队不存在" }, { status: 404 });
     }
 
-    const result = await getAllTeamMembersForTeam(
-      team.accountId,
-      team.accessToken,
-      team.cookies || undefined
+    if (!team.cookies) {
+      return NextResponse.json(
+        { error: "团队未配置 Cookies，无法自动刷新 Access Token" },
+        { status: 400 }
+      );
+    }
+
+    const result = await withTeamTokenRefresh(team, (credentials) =>
+      getAllTeamMembersForTeam(
+        credentials.accountId,
+        credentials.accessToken,
+        credentials.cookies
+      )
     );
 
     if (!result.success) {
       return NextResponse.json(
         { error: result.error || "获取成员列表失败" },
-        { status: 502 }
+        { status: result.status ?? 502 }
       );
     }
 

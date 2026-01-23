@@ -5,6 +5,7 @@ const CHATGPT_API_BASE = "https://chatgpt.com/backend-api";
 interface InviteResult {
   success: boolean;
   error?: string;
+  status?: number;
   data?: unknown;
 }
 
@@ -45,6 +46,7 @@ interface TeamMembersResult {
   members?: TeamMember[];
   total?: number;
   error?: string;
+  status?: number;
 }
 
 interface TeamMemberKickResult {
@@ -69,10 +71,10 @@ function looksLikeCloudflareChallenge(body: string): boolean {
   );
 }
 
-function getHeaders(credentials?: TeamCredentials): Record<string, string> {
-  const token = credentials?.accessToken ?? process.env.CHATGPT_ACCESS_TOKEN;
-  const cookies = credentials?.cookies ?? process.env.CHATGPT_COOKIES;
-  const accountId = credentials?.accountId ?? process.env.CHATGPT_ACCOUNT_ID;
+function getHeaders(credentials: TeamCredentials): Record<string, string> {
+  const token = credentials.accessToken;
+  const cookies = credentials.cookies;
+  const accountId = credentials.accountId;
 
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${token}`,
@@ -131,6 +133,7 @@ export async function sendTeamInviteForTeam(
     });
 
     logger.debug("ChatGPT", `Response status: ${response.status}`);
+    const status = response.status;
 
     const responseText = await response.text();
     logger.debug("ChatGPT", `Response body: ${responseText.slice(0, 200)}`);
@@ -141,6 +144,7 @@ export async function sendTeamInviteForTeam(
         return {
           success: false,
           error: "Cloudflare 验证拦截。请配置团队的 Cookies",
+          status,
         };
       }
 
@@ -153,17 +157,17 @@ export async function sendTeamInviteForTeam(
         errorMessage = responseText.slice(0, 200) || errorMessage;
       }
 
-      return { success: false, error: errorMessage };
+      return { success: false, error: errorMessage, status };
     }
 
     // Parse response
     try {
       const data = JSON.parse(responseText);
       logger.info("ChatGPT", "Invite sent successfully");
-      return { success: true, data };
+      return { success: true, data, status };
     } catch {
       logger.debug("ChatGPT", "Failed to parse success response");
-      return { success: true, data: responseText };
+      return { success: true, data: responseText, status };
     }
   } catch (error) {
     logger.error("ChatGPT", "Fetch error:", error);
@@ -172,26 +176,6 @@ export async function sendTeamInviteForTeam(
       error: error instanceof Error ? error.message : "未知错误",
     };
   }
-}
-
-// Legacy function using env vars (for backward compatibility)
-export async function sendTeamInvite(email: string): Promise<InviteResult> {
-  const token = process.env.CHATGPT_ACCESS_TOKEN;
-  const accountId = process.env.CHATGPT_ACCOUNT_ID;
-  const cookies = process.env.CHATGPT_COOKIES;
-
-  if (!token || !accountId) {
-    return {
-      success: false,
-      error: "缺少 CHATGPT_ACCESS_TOKEN 或 CHATGPT_ACCOUNT_ID",
-    };
-  }
-
-  return sendTeamInviteForTeam(email, {
-    accountId,
-    accessToken: token,
-    cookies,
-  });
 }
 
 export async function getTeamSubscriptionForTeam(
@@ -324,30 +308,6 @@ export async function getTeamSubscriptionForTeam(
   }
 }
 
-export async function getTeamSubscription(): Promise<SubscriptionInfo | null> {
-  const token = process.env.CHATGPT_ACCESS_TOKEN;
-  const accountId = process.env.CHATGPT_ACCOUNT_ID;
-  const cookies = process.env.CHATGPT_COOKIES;
-
-  if (!token || !accountId) {
-    return null;
-  }
-
-  const result = await getTeamSubscriptionForTeam(accountId, token, cookies);
-  return result.success ? (result.subscription ?? null) : null;
-}
-
-export async function checkTokenValid(): Promise<boolean> {
-  const token = process.env.CHATGPT_ACCESS_TOKEN;
-  const accountId = process.env.CHATGPT_ACCOUNT_ID;
-  const cookies = process.env.CHATGPT_COOKIES;
-
-  if (!token || !accountId) return false;
-
-  const result = await getTeamSubscriptionForTeam(accountId, token, cookies);
-  return result.success;
-}
-
 // Get team members for a specific team
 export async function getTeamMembersForTeam(
   accountId: string,
@@ -373,6 +333,7 @@ export async function getTeamMembersForTeam(
       return {
         success: false,
         error: `HTTP ${response.status}`,
+        status: response.status,
       };
     }
 
@@ -396,6 +357,7 @@ export async function getTeamMembersForTeam(
       success: true,
       members,
       total: data.total || members.length,
+      status: response.status,
     };
   } catch (error) {
     return {
@@ -519,6 +481,7 @@ export async function getAllTeamMembersForTeam(
         return {
           success: false,
           error: `HTTP ${response.status}`,
+          status: response.status,
         };
       }
 
@@ -563,6 +526,7 @@ export async function getAllTeamMembersForTeam(
       success: true,
       members: allMembers,
       total: total ?? allMembers.length,
+      status: 200,
     };
   } catch (error) {
     return {
@@ -570,20 +534,4 @@ export async function getAllTeamMembersForTeam(
       error: error instanceof Error ? error.message : "未知错误",
     };
   }
-}
-
-// Legacy function using env vars
-export async function getTeamMembers(): Promise<TeamMembersResult> {
-  const token = process.env.CHATGPT_ACCESS_TOKEN;
-  const accountId = process.env.CHATGPT_ACCOUNT_ID;
-  const cookies = process.env.CHATGPT_COOKIES;
-
-  if (!token || !accountId) {
-    return {
-      success: false,
-      error: "缺少 CHATGPT_ACCESS_TOKEN 或 CHATGPT_ACCOUNT_ID",
-    };
-  }
-
-  return getTeamMembersForTeam(accountId, token, cookies);
 }

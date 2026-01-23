@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { sendTeamInvite, sendTeamInviteForTeam } from "@/lib/chatgpt";
+import { sendTeamInviteForTeam } from "@/lib/chatgpt";
 import { isValidCodeFormat, isValidEmail } from "@/lib/utils";
 import { findAvailableTeam } from "@/lib/teamAssignment";
 import { checkRateLimit, getClientIdentifier } from "@/lib/rateLimit";
 import { InviteCodeStatus, InvitationStatus, Prisma } from "@/generated/prisma";
+import { withTeamTokenRefresh } from "@/lib/teamAccessToken";
 
 export const runtime = "nodejs";
 
@@ -166,53 +167,39 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Check if we have teams configured in the database (排除已到期的团队)
-    const now = new Date();
-    const teamsCount = await prisma.team.count({
-      where: {
-        isActive: true,
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-      },
-    });
-
     let teamId: string | null = null;
     let inviteResult: { success: boolean; error?: string };
 
-    if (teamsCount > 0) {
-      // Use multi-team mode: find an available team
-      const teamResult = await findAvailableTeam();
+    // 多团队模式：仅使用后台团队配置
+    const teamResult = await findAvailableTeam();
 
-      if (!teamResult.success || !teamResult.team) {
-        const errorMessage = teamResult.error || "暂无可用团队名额";
-        await prisma.invitation.update({
-          where: { id: invitation.id },
-          data: {
-            status: InvitationStatus.FAILED,
-            errorMessage,
-            processedAt: new Date(),
-          },
-        });
-        return NextResponse.json(
-          { success: false, invitationId: invitation.id, message: errorMessage },
-          { status: 503 }
-        );
-      }
-
-      const team = teamResult.team;
-      teamId = team.id;
-
-      // Send invite using this team's credentials
-      inviteResult = await sendTeamInviteForTeam(email, {
-        accountId: team.accountId,
-        accessToken: team.accessToken,
-        cookies: team.cookies || undefined,
+    if (!teamResult.success || !teamResult.team) {
+      const errorMessage = teamResult.error || "暂无可用团队名额";
+      await prisma.invitation.update({
+        where: { id: invitation.id },
+        data: {
+          status: InvitationStatus.FAILED,
+          errorMessage,
+          processedAt: new Date(),
+        },
       });
-
-      // If successful, update team member count
-    } else {
-      // Fallback to legacy mode using environment variables
-      inviteResult = await sendTeamInvite(email);
+      return NextResponse.json(
+        { success: false, invitationId: invitation.id, message: errorMessage },
+        { status: 503 }
+      );
     }
+
+    const team = teamResult.team;
+    teamId = team.id;
+
+    // 使用团队凭据发送邀请（自动刷新 Access Token）
+    inviteResult = await withTeamTokenRefresh(team, (credentials) =>
+      sendTeamInviteForTeam(email, {
+        accountId: credentials.accountId,
+        accessToken: credentials.accessToken,
+        cookies: credentials.cookies,
+      })
+    );
 
     const processedAt = new Date();
 

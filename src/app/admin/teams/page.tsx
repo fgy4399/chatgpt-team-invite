@@ -940,14 +940,18 @@ export default function TeamsPage() {
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
-                    Cookies (可选)
+                    Cookies *
                   </label>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+                    必须包含 __Secure-next-auth.session-token，用于自动刷新 Access Token
+                  </p>
                   <input
                     type="text"
                     value={newTeam.cookies}
                     onChange={(e) => setNewTeam({ ...newTeam, cookies: e.target.value })}
                     className="w-full px-4 py-2.5 rounded-xl border border-zinc-300/80 dark:border-zinc-700 bg-white/90 dark:bg-zinc-800/80 text-zinc-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-colors"
-                    placeholder="用于绕过 Cloudflare 验证"
+                    placeholder="请粘贴完整 Cookies"
+                    required
                   />
                 </div>
                 <div>
@@ -1045,6 +1049,9 @@ export default function TeamsPage() {
                   <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
                     Cookies (留空保持不变)
                   </label>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+                    建议更新以保证自动刷新可用，必须包含 __Secure-next-auth.session-token
+                  </p>
                   <input
                     type="text"
                     value={editingTeam.cookies}
@@ -1245,7 +1252,7 @@ export default function TeamsPage() {
             <li>到期时间会在添加团队时自动从 ChatGPT 订阅信息获取，到期后团队将不再接收新邀请</li>
             <li>点击“邀请”可指定某个团队手动发送邀请邮件</li>
             <li>点击“检测”可实时检查团队凭据有效性（可能受到 Cloudflare/限流影响）</li>
-            <li>列表支持单团队“同步”，必要时再用顶部“同步全部”</li>
+            <li>列表支持单个团队“同步”，必要时再用顶部“同步全部”</li>
             <li>禁用的团队不会接收新邀请</li>
           </ul>
         </div>

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getTokenFromRequest, verifyToken } from "@/lib/auth";
 import { removeTeamMemberForTeam } from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
+import { withTeamTokenRefresh } from "@/lib/teamAccessToken";
 
 export const runtime = "nodejs";
 
@@ -49,11 +50,20 @@ export async function DELETE(
       return NextResponse.json({ error: "团队不存在" }, { status: 404 });
     }
 
-    const result = await removeTeamMemberForTeam(
-      team.accountId,
-      team.accessToken,
-      memberId,
-      team.cookies || undefined
+    if (!team.cookies) {
+      return NextResponse.json(
+        { error: "团队未配置 Cookies，无法自动刷新 Access Token" },
+        { status: 400 }
+      );
+    }
+
+    const result = await withTeamTokenRefresh(team, (credentials) =>
+      removeTeamMemberForTeam(
+        credentials.accountId,
+        credentials.accessToken,
+        memberId,
+        credentials.cookies
+      )
     );
 
     if (!result.success) {

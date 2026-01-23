@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { sendTeamInviteForTeam, getTeamMembersForTeam } from "./chatgpt";
+import { withTeamTokenRefresh } from "./teamAccessToken";
 
 export interface AvailableTeam {
   id: string;
@@ -59,8 +60,16 @@ export async function findAvailableTeam(): Promise<TeamAssignmentResult> {
       };
     }
 
+    const cookieTeams = teams.filter((team) => Boolean(team.cookies));
+    if (cookieTeams.length === 0) {
+      return {
+        success: false,
+        error: "团队未配置 Cookies，无法自动刷新 Access Token",
+      };
+    }
+
     // Find the first team that has available slots
-    for (const team of teams) {
+    for (const team of cookieTeams) {
       // 双保险：防止到期团队被选中
       if (team.expiresAt && now > team.expiresAt) {
         continue;
@@ -89,10 +98,12 @@ export async function findAvailableTeam(): Promise<TeamAssignmentResult> {
         const nowMs = Date.now();
         if (nowMs - lastSyncAt > TEAM_MEMBER_SYNC_TTL_MS) {
           try {
-            const result = await getTeamMembersForTeam(
-              team.accountId,
-              team.accessToken,
-              team.cookies || undefined
+            const result = await withTeamTokenRefresh(team, (credentials) =>
+              getTeamMembersForTeam(
+                credentials.accountId,
+                credentials.accessToken,
+                credentials.cookies
+              )
             );
 
             const actualCount =
@@ -169,11 +180,13 @@ export async function sendInviteWithAutoTeam(
   const team = teamResult.team;
 
   // Send the invite using this team's credentials
-  const inviteResult = await sendTeamInviteForTeam(email, {
-    accountId: team.accountId,
-    accessToken: team.accessToken,
-    cookies: team.cookies || undefined,
-  });
+  const inviteResult = await withTeamTokenRefresh(team, (credentials) =>
+    sendTeamInviteForTeam(email, {
+      accountId: credentials.accountId,
+      accessToken: credentials.accessToken,
+      cookies: credentials.cookies,
+    })
+  );
 
   if (!inviteResult.success) {
     return {
@@ -209,10 +222,16 @@ export async function syncAllTeamMemberCounts(): Promise<void> {
 
   for (const team of teams) {
     try {
-      const result = await getTeamMembersForTeam(
-        team.accountId,
-        team.accessToken,
-        team.cookies || undefined
+      if (!team.cookies) {
+        continue;
+      }
+
+      const result = await withTeamTokenRefresh(team, (credentials) =>
+        getTeamMembersForTeam(
+          credentials.accountId,
+          credentials.accessToken,
+          credentials.cookies
+        )
       );
 
       if (result.success && result.total !== undefined) {

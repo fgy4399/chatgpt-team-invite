@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { getTeamMembersForTeam } from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
+import { withTeamTokenRefresh } from "@/lib/teamAccessToken";
 
 export const runtime = "nodejs";
 
@@ -44,10 +45,21 @@ export const POST = withAuth(async () => {
     // 限制并发，避免触发 ChatGPT API 限流
     const results = await mapWithConcurrency(teams, 3, async (team) => {
         try {
-          const membersResult = await getTeamMembersForTeam(
-            team.accountId,
-            team.accessToken,
-            team.cookies || undefined
+          if (!team.cookies) {
+            return {
+              teamId: team.id,
+              name: team.name,
+              error: "未配置 Cookies，无法自动刷新 Access Token",
+              synced: false,
+            };
+          }
+
+          const membersResult = await withTeamTokenRefresh(team, (credentials) =>
+            getTeamMembersForTeam(
+              credentials.accountId,
+              credentials.accessToken,
+              credentials.cookies
+            )
           );
 
           if (membersResult.success && membersResult.total !== undefined) {

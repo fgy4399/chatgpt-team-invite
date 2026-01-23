@@ -38,16 +38,18 @@ npm run dev
 | `JWT_SECRET` | ✅ | 管理员 JWT 签名密钥（建议 ≥ 32 位随机字符串） |
 | `ADMIN_USERNAME` | ✅* | 仅用于“首次初始化管理员账号”（数据库里还没有任何 Admin 时生效） |
 | `ADMIN_PASSWORD` | ✅* | 同上 |
-| `CHATGPT_ACCESS_TOKEN` | 视情况 | 单团队模式：后台未配置任何 Team 时使用 |
-| `CHATGPT_ACCOUNT_ID` | 视情况 | 单团队模式：后台未配置任何 Team 时使用 |
-| `CHATGPT_COOKIES` | 可选 | 用于绕过 Cloudflare 验证（谨慎使用） |
 | `DATABASE_URL` | 可选 | 生产建议配置；本地默认 `prisma/dev.db` |
 | `DATABASE_AUTH_TOKEN` | 可选 | Turso/libsql 的鉴权 token |
 | `LOG_LEVEL` | 可选 | `debug/info/warn/error` |
 
 说明：
-- 推荐在后台添加 Team（多团队模式）；只有当后台未配置任何 Team 时，才会使用 `CHATGPT_*` 单团队环境变量。
+- 必须在后台配置 Team，并提供完整 Cookies（包含 `__Secure-next-auth.session-token`）以支持 Access Token 自动刷新。
 - 修改 `ADMIN_USERNAME/ADMIN_PASSWORD` 不会更新已存在的管理员账号（仅首次初始化生效）。
+
+## Access Token 自动刷新
+
+- 系统会在 Access Token 即将过期时自动刷新（依赖后台配置的 Cookies）。
+- 若 Cookies 缺少 Session Token（`__Secure-next-auth.session-token`），刷新将失败并阻断相关操作。
 
 ## 数据库与迁移
 
