@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sendTeamInviteForTeam } from "@/lib/chatgpt";
 import { isValidCodeFormat, isValidEmail } from "@/lib/utils";
-import { findAvailableTeam } from "@/lib/teamAssignment";
+import { findAvailableTeam, releaseTeamSeat } from "@/lib/teamAssignment";
 import { checkRateLimit, getClientIdentifier } from "@/lib/rateLimit";
 import { InviteCodeStatus, InvitationStatus, Prisma } from "@/generated/prisma";
 import { withTeamTokenRefresh } from "@/lib/teamAccessToken";
@@ -11,6 +11,10 @@ export const runtime = "nodejs";
 
 // POST /api/invite/submit - Submit an invitation request
 export async function POST(req: NextRequest) {
+  let invitationIdForResponse: string | null = null;
+  let reservedTeamId: string | null = null;
+  let inviteSent = false;
+
   try {
     // 速率限制检查
     const clientId = getClientIdentifier(req);
@@ -58,7 +62,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (inviteCode.expiresAt && new Date() > inviteCode.expiresAt) {
+    // 仅在“首次使用”时校验过期；已绑定邮箱的邀请记录不应因过期被阻断
+    if (!inviteCode.invitation && inviteCode.expiresAt && new Date() > inviteCode.expiresAt) {
       await prisma.inviteCode.update({
         where: { id: inviteCode.id },
         data: { status: InviteCodeStatus.EXPIRED },
@@ -69,25 +74,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (inviteCode.status !== InviteCodeStatus.PENDING) {
-      const statusMessages: Partial<Record<InviteCodeStatus, string>> = {
-        [InviteCodeStatus.USED]: "该邀请码已被使用",
-        [InviteCodeStatus.EXPIRED]: "该邀请码已过期",
-        [InviteCodeStatus.REVOKED]: "该邀请码已被撤销",
-      };
-      return NextResponse.json(
-        {
-          success: false,
-          message: statusMessages[inviteCode.status] || "该邀请码已失效",
-          invitationId: inviteCode.invitation?.id,
-        },
-        { status: 400 }
-      );
-    }
-
     // 单个邀请码只允许绑定一个邮箱，避免被他人重复使用
     let invitation = inviteCode.invitation;
     if (invitation) {
+      invitationIdForResponse = invitation.id;
       if (invitation.email !== email) {
         return NextResponse.json(
           { success: false, message: "该邀请码已绑定其他邮箱，请确认后重试" },
@@ -103,12 +93,12 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // 失败/成功都直接返回状态页（成功状态会在 status API 中显示）
+      // 已发送：允许用户重复提交相同“邀请码 + 邮箱”进入状态页（便于找回链接/重刷状态）
       if (invitation.status === InvitationStatus.SUCCESS) {
         return NextResponse.json({
           success: true,
           invitationId: invitation.id,
-          message: "邀请已发送成功！请检查您的邮箱。",
+          message: "邀请邮件已发送，请检查邮箱并接受邀请后加入团队。",
         });
       }
 
@@ -121,6 +111,20 @@ export async function POST(req: NextRequest) {
           processedAt: null,
         },
       });
+    } else if (inviteCode.status !== InviteCodeStatus.PENDING) {
+      const statusMessages: Partial<Record<InviteCodeStatus, string>> = {
+        [InviteCodeStatus.USED]: "该邀请码已被使用",
+        [InviteCodeStatus.EXPIRED]: "该邀请码已过期",
+        [InviteCodeStatus.REVOKED]: "该邀请码已被撤销",
+      };
+      return NextResponse.json(
+        {
+          success: false,
+          message: statusMessages[inviteCode.status] || "该邀请码已失效",
+          invitationId: inviteCode.invitation?.id,
+        },
+        { status: 400 }
+      );
     } else {
       // 首次使用：创建邀请记录作为“锁”，防止并发重复提交
       try {
@@ -131,6 +135,7 @@ export async function POST(req: NextRequest) {
             status: InvitationStatus.PENDING,
           },
         });
+        invitationIdForResponse = invitation.id;
       } catch {
         // 可能是并发请求导致的唯一约束冲突，读取已存在的记录即可
         const existing = await prisma.invitation.findUnique({
@@ -164,6 +169,7 @@ export async function POST(req: NextRequest) {
             processedAt: null,
           },
         });
+        invitationIdForResponse = invitation.id;
       }
     }
 
@@ -191,6 +197,7 @@ export async function POST(req: NextRequest) {
 
     const team = teamResult.team;
     teamId = team.id;
+    reservedTeamId = team.id;
 
     // 使用团队凭据发送邀请（自动刷新 Access Token）
     inviteResult = await withTeamTokenRefresh(team, (credentials) =>
@@ -200,6 +207,7 @@ export async function POST(req: NextRequest) {
         cookies: credentials.cookies,
       })
     );
+    inviteSent = inviteResult.success;
 
     const processedAt = new Date();
 
@@ -220,34 +228,78 @@ export async function POST(req: NextRequest) {
         }),
       ];
 
-      // 成功才消耗邀请码并更新团队成员数
-      if (teamId) {
-        transactionOps.push(
-          prisma.team.update({
-            where: { id: teamId },
-            data: { currentMembers: { increment: 1 } },
-          })
-        );
+      const delays = [0, 50, 150, 300];
+      let committed = false;
+      let lastError: unknown;
+
+      for (const delay of delays) {
+        if (delay) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+        try {
+          await prisma.$transaction(transactionOps);
+          committed = true;
+          break;
+        } catch (error) {
+          lastError = error;
+        }
       }
 
-      await prisma.$transaction(transactionOps);
+      if (!committed) {
+        console.error("Finalize invitation transaction failed:", lastError);
+
+        const [invitationUpdate, codeUpdate] = await Promise.allSettled([
+          prisma.invitation.update({
+            where: { id: invitation.id },
+            data: {
+              status: InvitationStatus.SUCCESS,
+              errorMessage: null,
+              processedAt,
+              teamId,
+            },
+          }),
+          prisma.inviteCode.update({
+            where: { id: inviteCode.id },
+            data: { status: InviteCodeStatus.USED, usedAt: processedAt },
+          }),
+        ]);
+
+        if (invitationUpdate.status === "rejected") {
+          throw invitationUpdate.reason;
+        }
+
+        if (codeUpdate.status === "rejected") {
+          return NextResponse.json({
+            success: true,
+            invitationId: invitation.id,
+            message: "邀请邮件已发送，请检查邮箱并接受邀请后加入团队。",
+          });
+        }
+      }
 
       return NextResponse.json({
         success: true,
         invitationId: invitation.id,
-        message: "邀请已发送成功！请检查您的邮箱。",
+        message: "邀请邮件已发送，请检查邮箱并接受邀请后加入团队。",
       });
     } else {
       // 失败不消耗邀请码：保留 PENDING 状态，允许用户稍后重试（同一邀请码仅限同一邮箱）
-      await prisma.invitation.update({
-        where: { id: invitation.id },
-        data: {
-          status: InvitationStatus.FAILED,
-          errorMessage: inviteResult.error,
-          processedAt,
-          teamId,
-        },
-      });
+      try {
+        await prisma.invitation.update({
+          where: { id: invitation.id },
+          data: {
+            status: InvitationStatus.FAILED,
+            errorMessage: inviteResult.error,
+            processedAt,
+            teamId,
+          },
+        });
+      } finally {
+        if (reservedTeamId) {
+          await releaseTeamSeat(reservedTeamId);
+          reservedTeamId = null;
+        }
+      }
 
       return NextResponse.json({
         success: false,
@@ -257,8 +309,19 @@ export async function POST(req: NextRequest) {
     }
   } catch (error) {
     console.error("Submit invitation error:", error);
+    if (reservedTeamId && !inviteSent) {
+      try {
+        await releaseTeamSeat(reservedTeamId);
+      } catch (releaseError) {
+        console.error("Failed to release reserved team seat:", releaseError);
+      }
+    }
     return NextResponse.json(
-      { success: false, message: "处理邀请时出错" },
+      {
+        success: false,
+        invitationId: invitationIdForResponse,
+        message: "处理邀请时出错",
+      },
       { status: 500 }
     );
   }

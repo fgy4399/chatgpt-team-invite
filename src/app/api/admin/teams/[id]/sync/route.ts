@@ -4,6 +4,7 @@ import { getTokenFromRequest, verifyToken } from "@/lib/auth";
 import { getTeamMembersForTeam } from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
 import { withTeamTokenRefresh } from "@/lib/teamAccessToken";
+import { InvitationStatus } from "@/generated/prisma";
 
 export const runtime = "nodejs";
 
@@ -39,6 +40,7 @@ export async function POST(
         accountId: true,
         accessToken: true,
         cookies: true,
+        currentMembers: true,
       },
     });
 
@@ -75,12 +77,21 @@ export async function POST(
           ? membersResult.members.length
           : 0;
 
-    await prisma.team.update({
-      where: { id: team.id },
-      data: { currentMembers: nextCount },
+    const reservedInvites = await prisma.invitation.count({
+      where: {
+        teamId: team.id,
+        status: { in: [InvitationStatus.PENDING, InvitationStatus.SUCCESS] },
+      },
     });
 
-    return NextResponse.json({ success: true, currentMembers: nextCount });
+    const safeCount = Math.max(team.currentMembers, reservedInvites, nextCount);
+
+    await prisma.team.update({
+      where: { id: team.id },
+      data: { currentMembers: safeCount },
+    });
+
+    return NextResponse.json({ success: true, currentMembers: safeCount });
   } catch (error) {
     logger.error("Teams", "Sync team members error:", error);
     return NextResponse.json({ error: "同步成员数失败" }, { status: 500 });

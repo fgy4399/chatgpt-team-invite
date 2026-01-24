@@ -4,6 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { getTeamMembersForTeam, getTeamSubscriptionForTeam } from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
 import { hasSessionTokenCookie, refreshAccessTokenWithCookies } from "@/lib/teamAccessToken";
+import { InvitationStatus } from "@/generated/prisma";
 
 export const runtime = "nodejs";
 
@@ -29,7 +30,44 @@ export const GET = withAuth(async () => {
       },
     });
 
-    return NextResponse.json({ teams });
+    const teamIds = teams.map((team) => team.id);
+    const reserved = await prisma.invitation.groupBy({
+      by: ["teamId"],
+      where: {
+        teamId: { in: teamIds },
+        status: { in: [InvitationStatus.PENDING, InvitationStatus.SUCCESS] },
+      },
+      _count: { _all: true },
+    });
+
+    const reservedMap = new Map<string, number>();
+    for (const row of reserved) {
+      if (row.teamId) {
+        reservedMap.set(row.teamId, row._count._all);
+      }
+    }
+
+    const updates: Promise<unknown>[] = [];
+    const nextTeams = teams.map((team) => {
+      const reservedInvites = reservedMap.get(team.id) || 0;
+      const nextCount = Math.max(team.currentMembers, reservedInvites);
+      if (nextCount !== team.currentMembers) {
+        updates.push(
+          prisma.team.update({
+            where: { id: team.id },
+            data: { currentMembers: nextCount },
+          })
+        );
+        return { ...team, currentMembers: nextCount };
+      }
+      return team;
+    });
+
+    if (updates.length) {
+      await Promise.all(updates);
+    }
+
+    return NextResponse.json({ teams: nextTeams });
   } catch (error) {
     logger.error("Teams", "Get teams error:", error);
     return NextResponse.json(

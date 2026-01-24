@@ -138,16 +138,25 @@ export async function sendTeamInviteForTeam(
     const responseText = await response.text();
     logger.debug("ChatGPT", `Response body: ${responseText.slice(0, 200)}`);
 
-    if (!response.ok) {
-      // Check if it's a Cloudflare challenge
-      if (responseText.includes("cf_chl") || responseText.includes("challenge-platform")) {
-        return {
-          success: false,
-          error: "Cloudflare 验证拦截。请配置团队的 Cookies",
-          status,
-        };
-      }
+    // Cloudflare/拦截页有时会以 200 返回，必须在 response.ok 之前识别
+    if (looksLikeCloudflareChallenge(responseText)) {
+      return {
+        success: false,
+        error: "Cloudflare 验证拦截。请配置团队的 Cookies",
+        status,
+      };
+    }
 
+    const trimmed = responseText.trim();
+    if (trimmed && trimmed.startsWith("<")) {
+      return {
+        success: false,
+        error: "上游返回 HTML（可能被拦截/跳转），请检查 Cookies 或稍后重试",
+        status,
+      };
+    }
+
+    if (!response.ok) {
       let errorMessage = `HTTP ${response.status}`;
 
       try {

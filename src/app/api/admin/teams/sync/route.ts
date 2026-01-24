@@ -4,6 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { getTeamMembersForTeam } from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
 import { withTeamTokenRefresh } from "@/lib/teamAccessToken";
+import { InvitationStatus } from "@/generated/prisma";
 
 export const runtime = "nodejs";
 
@@ -63,14 +64,27 @@ export const POST = withAuth(async () => {
           );
 
           if (membersResult.success && membersResult.total !== undefined) {
+            const reservedInvites = await prisma.invitation.count({
+              where: {
+                teamId: team.id,
+                status: { in: [InvitationStatus.PENDING, InvitationStatus.SUCCESS] },
+              },
+            });
+
+            const nextCount = Math.max(
+              team.currentMembers,
+              reservedInvites,
+              membersResult.total
+            );
+
             await prisma.team.update({
               where: { id: team.id },
-              data: { currentMembers: membersResult.total },
+              data: { currentMembers: nextCount },
             });
             return {
               teamId: team.id,
               name: team.name,
-              currentMembers: membersResult.total,
+              currentMembers: nextCount,
               synced: true,
             };
           } else {

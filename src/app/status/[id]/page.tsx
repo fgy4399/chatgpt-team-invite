@@ -48,7 +48,7 @@ export default function StatusPage() {
 
   const getStatusLabel = (status: string) => {
     const labels: Record<string, string> = {
-      SUCCESS: "成功",
+      SUCCESS: "已发送",
       FAILED: "失败",
       PENDING: "处理中",
     };

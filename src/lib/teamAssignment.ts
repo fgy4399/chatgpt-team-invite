@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { sendTeamInviteForTeam, getTeamMembersForTeam } from "./chatgpt";
 import { withTeamTokenRefresh } from "./teamAccessToken";
+import { InvitationStatus } from "@/generated/prisma";
 
 export interface AvailableTeam {
   id: string;
@@ -36,6 +37,50 @@ function shouldSyncTeamMemberCount(maxMembers: number, currentMembers: number): 
   return remaining <= 1;
 }
 
+async function getReservedInviteCountMap(teamIds: string[]): Promise<Map<string, number>> {
+  if (teamIds.length === 0) return new Map();
+
+  const grouped = await prisma.invitation.groupBy({
+    by: ["teamId"],
+    where: {
+      teamId: { in: teamIds },
+      status: { in: [InvitationStatus.PENDING, InvitationStatus.SUCCESS] },
+    },
+    _count: { _all: true },
+  });
+
+  const map = new Map<string, number>();
+  for (const row of grouped) {
+    if (row.teamId) {
+      map.set(row.teamId, row._count._all);
+    }
+  }
+  return map;
+}
+
+export async function tryReserveTeamSeat(teamId: string, maxMembers: number): Promise<boolean> {
+  if (maxMembers === 0) return true;
+  const result = await prisma.team.updateMany({
+    where: {
+      id: teamId,
+      currentMembers: { lt: maxMembers },
+    },
+    data: { currentMembers: { increment: 1 } },
+  });
+  return result.count === 1;
+}
+
+export async function releaseTeamSeat(teamId: string): Promise<void> {
+  await prisma.team.updateMany({
+    where: {
+      id: teamId,
+      maxMembers: { not: 0 },
+      currentMembers: { gt: 0 },
+    },
+    data: { currentMembers: { decrement: 1 } },
+  });
+}
+
 /**
  * Find an available team that has not reached its member limit
  * Teams are sorted by priority (lower number = higher priority)
@@ -68,6 +113,10 @@ export async function findAvailableTeam(): Promise<TeamAssignmentResult> {
       };
     }
 
+    const reservedInviteCountMap = await getReservedInviteCountMap(
+      cookieTeams.map((team) => team.id)
+    );
+
     // Find the first team that has available slots
     for (const team of cookieTeams) {
       // 双保险：防止到期团队被选中
@@ -90,6 +139,16 @@ export async function findAvailableTeam(): Promise<TeamAssignmentResult> {
             availableSlots: -1, // unlimited
           },
         };
+      }
+
+      // DB 自愈：currentMembers 不能低于“已占位的邀请数”，否则并发下会超发
+      const reservedInvites = reservedInviteCountMap.get(team.id) || 0;
+      if (reservedInvites > team.currentMembers) {
+        await prisma.team.update({
+          where: { id: team.id },
+          data: { currentMembers: reservedInvites },
+        });
+        team.currentMembers = reservedInvites;
       }
 
       // 接近上限时，按 TTL 刷新该团队的真实成员数，避免超发
@@ -115,7 +174,8 @@ export async function findAvailableTeam(): Promise<TeamAssignmentResult> {
 
             teamMemberSyncCache.set(team.id, nowMs);
 
-            if (actualCount !== team.currentMembers) {
+            // 只允许向上修正，避免把“已占位”的数量刷回去导致超发
+            if (actualCount > team.currentMembers) {
               await prisma.team.update({
                 where: { id: team.id },
                 data: { currentMembers: actualCount },
@@ -131,6 +191,11 @@ export async function findAvailableTeam(): Promise<TeamAssignmentResult> {
 
       // Check if team has available slots
       if (team.currentMembers < team.maxMembers) {
+        const reserved = await tryReserveTeamSeat(team.id, team.maxMembers);
+        if (!reserved) {
+          continue;
+        }
+        const nextCount = team.currentMembers + 1;
         return {
           success: true,
           team: {
@@ -140,8 +205,8 @@ export async function findAvailableTeam(): Promise<TeamAssignmentResult> {
             accessToken: team.accessToken,
             cookies: team.cookies,
             maxMembers: team.maxMembers,
-            currentMembers: team.currentMembers,
-            availableSlots: team.maxMembers - team.currentMembers,
+            currentMembers: nextCount,
+            availableSlots: team.maxMembers - nextCount,
           },
         };
       }
@@ -189,17 +254,12 @@ export async function sendInviteWithAutoTeam(
   );
 
   if (!inviteResult.success) {
+    await releaseTeamSeat(team.id);
     return {
       success: false,
       error: inviteResult.error,
     };
   }
-
-  // Update team member count (increment by 1)
-  await prisma.team.update({
-    where: { id: team.id },
-    data: { currentMembers: { increment: 1 } },
-  });
 
   return {
     success: true,
@@ -220,6 +280,10 @@ export async function syncAllTeamMemberCounts(): Promise<void> {
     },
   });
 
+  const reservedInviteCountMap = await getReservedInviteCountMap(
+    teams.map((team) => team.id)
+  );
+
   for (const team of teams) {
     try {
       if (!team.cookies) {
@@ -235,9 +299,11 @@ export async function syncAllTeamMemberCounts(): Promise<void> {
       );
 
       if (result.success && result.total !== undefined) {
+        const reservedInvites = reservedInviteCountMap.get(team.id) || 0;
+        const nextCount = Math.max(team.currentMembers, reservedInvites, result.total);
         await prisma.team.update({
           where: { id: team.id },
-          data: { currentMembers: result.total },
+          data: { currentMembers: nextCount },
         });
         teamMemberSyncCache.set(team.id, Date.now());
       }

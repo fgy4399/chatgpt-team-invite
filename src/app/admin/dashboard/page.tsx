@@ -32,6 +32,10 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [generateCount, setGenerateCount] = useState(1);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(50);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   const getToken = () => localStorage.getItem("admin_token");
 
@@ -43,7 +47,7 @@ export default function AdminDashboard() {
     }
 
     try {
-      const res = await fetch("/api/admin/codes", {
+      const res = await fetch(`/api/admin/codes?page=${page}&limit=${limit}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -55,6 +59,8 @@ export default function AdminDashboard() {
 
       const data = await res.json();
       setCodes(data.codes || []);
+      setTotal(typeof data.total === "number" ? data.total : 0);
+      setTotalPages(typeof data.totalPages === "number" ? data.totalPages : 1);
 
       if (data.stats) {
         setStats(data.stats);
@@ -73,7 +79,7 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, [router, page, limit]);
 
   useEffect(() => {
     fetchCodes();
@@ -95,7 +101,11 @@ export default function AdminDashboard() {
       });
 
       if (res.ok) {
-        await fetchCodes();
+        if (page !== 1) {
+          setPage(1);
+        } else {
+          await fetchCodes();
+        }
       }
     } catch (error) {
       console.error("Failed to generate codes:", error);
@@ -133,6 +143,33 @@ export default function AdminDashboard() {
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
+  };
+
+  const getInvitationBadge = (status?: string) => {
+    if (!status) {
+      return (
+        <span className="px-2 py-1 rounded text-xs font-medium bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+          -
+        </span>
+      );
+    }
+
+    const colors: Record<string, string> = {
+      PENDING: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
+      SUCCESS: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
+      FAILED: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+    };
+    const labels: Record<string, string> = {
+      PENDING: "处理中",
+      SUCCESS: "已发送",
+      FAILED: "失败",
+    };
+
+    return (
+      <span className={`px-2 py-1 rounded text-xs font-medium ${colors[status] || colors.PENDING}`}>
+        {labels[status] || status}
+      </span>
+    );
   };
 
   const getStatusBadge = (status: string) => {
@@ -272,8 +309,27 @@ export default function AdminDashboard() {
 
         {/* Codes Table */}
         <div className="rounded-2xl border border-violet-200/60 dark:border-violet-500/20 bg-white/80 dark:bg-zinc-900/60 backdrop-blur shadow overflow-hidden">
-          <div className="px-6 py-4 border-b border-zinc-200/70 dark:border-zinc-800">
+          <div className="px-6 py-4 border-b border-zinc-200/70 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">邀请码列表</h2>
+            <div className="flex items-center gap-3 text-sm text-zinc-600 dark:text-zinc-300">
+              <span>共 {total} 条</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">每页</span>
+                <select
+                  value={limit}
+                  onChange={(e) => {
+                    const next = parseInt(e.target.value) || 50;
+                    setLimit(next);
+                    setPage(1);
+                  }}
+                  className="px-3 py-2 rounded-xl border border-zinc-300/80 dark:border-zinc-700 bg-white/90 dark:bg-zinc-800/80 text-zinc-900 dark:text-white text-sm focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-colors"
+                >
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -282,6 +338,7 @@ export default function AdminDashboard() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">邀请码</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">状态</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">使用者</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">邀请状态</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">创建时间</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">操作</th>
                 </tr>
@@ -307,6 +364,9 @@ export default function AdminDashboard() {
                     <td className="px-6 py-4 text-sm text-zinc-600 dark:text-zinc-400">
                       {code.invitation?.email || "-"}
                     </td>
+                    <td className="px-6 py-4">
+                      {getInvitationBadge(code.invitation?.status)}
+                    </td>
                     <td className="px-6 py-4 text-sm text-zinc-600 dark:text-zinc-400">
                       {new Date(code.createdAt).toLocaleDateString()}
                     </td>
@@ -324,13 +384,36 @@ export default function AdminDashboard() {
                 ))}
                 {codes.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-10 text-center text-zinc-600 dark:text-zinc-400">
+                    <td colSpan={6} className="px-6 py-10 text-center text-zinc-600 dark:text-zinc-400">
                       暂无邀请码，请在上方生成！
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
+          </div>
+          <div className="px-6 py-4 border-t border-zinc-200/70 dark:border-zinc-800 flex items-center justify-between gap-3">
+            <div className="text-sm text-zinc-600 dark:text-zinc-300">
+              第 {page} / {totalPages} 页
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
+                className="px-4 py-2 rounded-xl border border-violet-200/70 dark:border-violet-500/25 bg-white/70 dark:bg-zinc-900/40 text-sm text-zinc-900 dark:text-white hover:bg-white dark:hover:bg-zinc-900/60 transition-colors disabled:opacity-50"
+              >
+                上一页
+              </button>
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
+                className="px-4 py-2 rounded-xl border border-violet-200/70 dark:border-violet-500/25 bg-white/70 dark:bg-zinc-900/40 text-sm text-zinc-900 dark:text-white hover:bg-white dark:hover:bg-zinc-900/60 transition-colors disabled:opacity-50"
+              >
+                下一页
+              </button>
+            </div>
           </div>
         </div>
       </main>

@@ -5,6 +5,8 @@ import { sendTeamInviteForTeam } from "@/lib/chatgpt";
 import { isValidEmail } from "@/lib/utils";
 import { logger } from "@/lib/logger";
 import { withTeamTokenRefresh } from "@/lib/teamAccessToken";
+import { releaseTeamSeat, tryReserveTeamSeat } from "@/lib/teamAssignment";
+import { InvitationStatus } from "@/generated/prisma";
 
 export const runtime = "nodejs";
 
@@ -74,7 +76,25 @@ export async function POST(
       );
     }
 
-    if (team.maxMembers !== 0 && team.currentMembers >= team.maxMembers) {
+    let currentMembers = team.currentMembers;
+    if (team.maxMembers !== 0) {
+      const reservedInvites = await prisma.invitation.count({
+        where: {
+          teamId: team.id,
+          status: { in: [InvitationStatus.PENDING, InvitationStatus.SUCCESS] },
+        },
+      });
+
+      if (reservedInvites > currentMembers) {
+        currentMembers = reservedInvites;
+        await prisma.team.update({
+          where: { id: team.id },
+          data: { currentMembers },
+        });
+      }
+    }
+
+    if (team.maxMembers !== 0 && currentMembers >= team.maxMembers) {
       return NextResponse.json(
         { error: "该团队名额已满，请先同步成员数或调整上限" },
         { status: 400 }
@@ -88,6 +108,18 @@ export async function POST(
       );
     }
 
+    const seatReserved =
+      team.maxMembers !== 0
+        ? await tryReserveTeamSeat(team.id, team.maxMembers)
+        : false;
+
+    if (team.maxMembers !== 0 && !seatReserved) {
+      return NextResponse.json(
+        { error: "该团队名额已满，请先同步成员数或调整上限" },
+        { status: 400 }
+      );
+    }
+
     const result = await withTeamTokenRefresh(team, (credentials) =>
       sendTeamInviteForTeam(email, {
         accountId: credentials.accountId,
@@ -97,23 +129,20 @@ export async function POST(
     );
 
     if (!result.success) {
+      if (seatReserved) {
+        await releaseTeamSeat(team.id);
+      }
       return NextResponse.json(
         { error: result.error || "发送邀请失败" },
         { status: result.status ?? 502 }
       );
     }
 
-    // 成功发送后，更新本地缓存的成员数（实际成员数以“同步成员数”为准）
-    await prisma.team.update({
-      where: { id: team.id },
-      data: { currentMembers: { increment: 1 } },
-    });
-
     return NextResponse.json({
       success: true,
       teamId: team.id,
       teamName: team.name,
-      message: "邀请已发送成功！请检查邮箱。",
+      message: "邀请邮件已发送，请检查邮箱并接受邀请后加入团队。",
     });
   } catch (error) {
     logger.error("Teams", "Manual invite error:", error);

@@ -44,20 +44,6 @@ export default function Home() {
     setLoading(true);
 
     try {
-      // Validate code first
-      const validateRes = await fetch("/api/invite/validate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-      });
-
-      const validateData = await validateRes.json();
-      if (!validateData.valid) {
-        setError(validateData.message || "邀请码无效");
-        setLoading(false);
-        return;
-      }
-
       // Submit invitation
       const submitRes = await fetch("/api/invite/submit", {
         method: "POST",

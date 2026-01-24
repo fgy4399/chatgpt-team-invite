@@ -44,7 +44,7 @@ export async function GET(
       processedAt: invitation.processedAt,
       message:
         invitation.status === InvitationStatus.SUCCESS
-          ? "邀请已发送，请检查您的邮箱。"
+          ? "邀请邮件已发送，请检查邮箱并接受邀请后加入团队。"
           : invitation.status === InvitationStatus.FAILED
           ? invitation.errorMessage || "发送邀请失败，请稍后重试"
           : "处理中...",
