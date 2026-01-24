@@ -44,6 +44,14 @@ interface TeamReservation {
   };
 }
 
+interface UpstreamInvite {
+  id: string;
+  email: string;
+  role: string;
+  createdAt: string;
+  isScimManaged?: boolean;
+}
+
 interface NewTeam {
   name: string;
   accountId: string;
@@ -120,9 +128,9 @@ export default function TeamsPage() {
 
   const [membersModalOpen, setMembersModalOpen] = useState(false);
   const [membersModalTeam, setMembersModalTeam] = useState<Team | null>(null);
-  const [membersTab, setMembersTab] = useState<"members" | "reservations">(
-    "members"
-  );
+  const [membersTab, setMembersTab] = useState<
+    "members" | "reservations" | "upstreamInvites"
+  >("members");
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState("");
   const [members, setMembers] = useState<TeamMember[]>([]);
@@ -142,6 +150,22 @@ export default function TeamsPage() {
   const [reservationActionError, setReservationActionError] = useState("");
   const [reservationActionSuccess, setReservationActionSuccess] = useState("");
   const reservationsFetchControllerRef = useRef<AbortController | null>(null);
+
+  const [upstreamInvitesLoading, setUpstreamInvitesLoading] = useState(false);
+  const [upstreamInvitesError, setUpstreamInvitesError] = useState("");
+  const [upstreamInvites, setUpstreamInvites] = useState<UpstreamInvite[]>([]);
+  const [upstreamInvitesTotal, setUpstreamInvitesTotal] = useState<number | null>(
+    null
+  );
+  const [upstreamInviteSelection, setUpstreamInviteSelection] = useState<
+    Record<string, boolean>
+  >({});
+  const [upstreamInviteActionLoading, setUpstreamInviteActionLoading] =
+    useState(false);
+  const [upstreamInviteActionError, setUpstreamInviteActionError] = useState("");
+  const [upstreamInviteActionSuccess, setUpstreamInviteActionSuccess] =
+    useState("");
+  const upstreamInvitesFetchControllerRef = useRef<AbortController | null>(null);
 
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [inviteModalTeam, setInviteModalTeam] = useState<Team | null>(null);
@@ -330,6 +354,8 @@ export default function TeamsPage() {
     membersFetchControllerRef.current = null;
     reservationsFetchControllerRef.current?.abort();
     reservationsFetchControllerRef.current = null;
+    upstreamInvitesFetchControllerRef.current?.abort();
+    upstreamInvitesFetchControllerRef.current = null;
     setMembersModalOpen(false);
     setMembersModalTeam(null);
     setMembersTab("members");
@@ -346,6 +372,14 @@ export default function TeamsPage() {
     setReservationActionLoading(false);
     setReservationActionError("");
     setReservationActionSuccess("");
+    setUpstreamInvitesLoading(false);
+    setUpstreamInvitesError("");
+    setUpstreamInvites([]);
+    setUpstreamInvitesTotal(null);
+    setUpstreamInviteSelection({});
+    setUpstreamInviteActionLoading(false);
+    setUpstreamInviteActionError("");
+    setUpstreamInviteActionSuccess("");
   }, []);
 
   const fetchTeamReservations = useCallback(
@@ -409,6 +443,80 @@ export default function TeamsPage() {
       } finally {
         if (reservationsFetchControllerRef.current === controller) {
           setReservationsLoading(false);
+        }
+      }
+    },
+    [router]
+  );
+
+  const fetchUpstreamInvites = useCallback(
+    async (team: Team) => {
+      const token = getToken();
+      if (!token) {
+        router.push("/admin");
+        return;
+      }
+
+      upstreamInvitesFetchControllerRef.current?.abort();
+      const controller = new AbortController();
+      upstreamInvitesFetchControllerRef.current = controller;
+
+      setUpstreamInvitesLoading(true);
+      setUpstreamInvitesError("");
+      setUpstreamInviteActionError("");
+      setUpstreamInviteActionSuccess("");
+      setUpstreamInviteSelection({});
+      setUpstreamInvites([]);
+      setUpstreamInvitesTotal(null);
+
+      try {
+        const res = await fetch(
+          `/api/admin/teams/${team.id}/upstream-invites?offset=0&limit=100&query=`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          }
+        );
+
+        if (res.status === 401) {
+          localStorage.removeItem("admin_token");
+          router.push("/admin");
+          return;
+        }
+
+        type UpstreamInvitesApiResponse = {
+          invites?: UpstreamInvite[];
+          total?: number;
+          error?: string;
+        };
+
+        const data = (await res
+          .json()
+          .catch(() => ({}))) as Partial<UpstreamInvitesApiResponse>;
+
+        if (upstreamInvitesFetchControllerRef.current !== controller) {
+          return;
+        }
+
+        if (res.ok) {
+          const list = Array.isArray(data.invites)
+            ? (data.invites as UpstreamInvite[])
+            : [];
+          setUpstreamInvites(list);
+          setUpstreamInvitesTotal(
+            typeof data.total === "number" ? data.total : list.length
+          );
+        } else {
+          setUpstreamInvitesError(data.error || "获取上游邀请失败");
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setUpstreamInvitesError("获取上游邀请失败，请稍后重试");
+      } finally {
+        if (upstreamInvitesFetchControllerRef.current === controller) {
+          setUpstreamInvitesLoading(false);
         }
       }
     },
@@ -750,7 +858,11 @@ export default function TeamsPage() {
     setMembersModalOpen(true);
     setMembersTab("members");
     setKickError("");
-    await Promise.all([fetchTeamMembers(team), fetchTeamReservations(team)]);
+    await Promise.all([
+      fetchTeamMembers(team),
+      fetchTeamReservations(team),
+      fetchUpstreamInvites(team),
+    ]);
   };
 
   const releaseSelectedReservations = async () => {
@@ -937,6 +1049,90 @@ export default function TeamsPage() {
       }
     }
     setReservationSelection(next);
+  };
+
+  const selectAllUpstreamInvites = () => {
+    const next: Record<string, boolean> = {};
+    for (const item of upstreamInvites) {
+      next[item.id] = true;
+    }
+    setUpstreamInviteSelection(next);
+  };
+
+  const cancelSelectedUpstreamInvites = async () => {
+    const team = membersModalTeam;
+    if (!team) return;
+
+    const token = getToken();
+    if (!token) {
+      router.push("/admin");
+      return;
+    }
+
+    const inviteIds = Object.keys(upstreamInviteSelection).filter(
+      (id) => upstreamInviteSelection[id]
+    );
+
+    if (inviteIds.length === 0) {
+      setUpstreamInviteActionError("请先选择要取消的上游邀请");
+      return;
+    }
+
+    if (
+      !confirm(
+        `确定要取消选中的 ${inviteIds.length} 个上游邀请吗？这会在 ChatGPT 官网侧删除 pending invite，用于释放占用的 seats。`
+      )
+    ) {
+      return;
+    }
+
+    setUpstreamInviteActionLoading(true);
+    setUpstreamInviteActionError("");
+    setUpstreamInviteActionSuccess("");
+
+    try {
+      const res = await fetch(`/api/admin/teams/${team.id}/upstream-invites`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "cancel", inviteIds }),
+      });
+
+      if (res.status === 401) {
+        localStorage.removeItem("admin_token");
+        router.push("/admin");
+        return;
+      }
+
+      type CancelUpstreamInvitesResponse = {
+        success?: boolean;
+        cancelledCount?: number;
+        error?: string;
+      };
+
+      const data = (await res
+        .json()
+        .catch(() => ({}))) as Partial<CancelUpstreamInvitesResponse>;
+
+      if (!res.ok || !data.success) {
+        setUpstreamInviteActionError(data.error || "取消上游邀请失败");
+        return;
+      }
+
+      const cancelled =
+        typeof data.cancelledCount === "number" ? data.cancelledCount : 0;
+      setUpstreamInviteActionSuccess(`已请求取消 ${cancelled} 个上游邀请`);
+
+      await fetchUpstreamInvites(team);
+    } catch (error) {
+      setUpstreamInviteActionError(
+        error instanceof Error ? error.message : "取消上游邀请失败，请稍后重试"
+      );
+    } finally {
+      setUpstreamInviteActionLoading(false);
+    }
   };
 
   const handleKickMember = async (member: TeamMember) => {
@@ -1690,6 +1886,8 @@ export default function TeamsPage() {
                     <span>占位 {reservations.length}</span>
                     <span className="text-zinc-400">·</span>
                     <span>未加入 {notJoinedReservationCount}</span>
+                    <span className="text-zinc-400">·</span>
+                    <span>上游邀请 {upstreamInvitesTotal ?? "-"}</span>
                   </span>
                 </div>
               </div>
@@ -1717,24 +1915,40 @@ export default function TeamsPage() {
                   >
                     占位
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setMembersTab("upstreamInvites")}
+                    className={`px-3 py-2 text-sm transition-colors ${
+                      membersTab === "upstreamInvites"
+                        ? "bg-violet-600 text-white"
+                        : "text-zinc-700 hover:text-zinc-900 hover:bg-white dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900/60"
+                    }`}
+                  >
+                    上游邀请
+                  </button>
                 </div>
                 <button
                   onClick={() =>
                     Promise.all([
                       fetchTeamMembers(membersModalTeam),
                       fetchTeamReservations(membersModalTeam),
+                      fetchUpstreamInvites(membersModalTeam),
                     ])
                   }
-                  disabled={membersLoading || reservationsLoading}
+                  disabled={
+                    membersLoading || reservationsLoading || upstreamInvitesLoading
+                  }
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-violet-200/70 dark:border-violet-500/25 bg-white/70 dark:bg-zinc-900/40 text-sm text-zinc-900 dark:text-white hover:bg-white dark:hover:bg-zinc-900/60 transition-colors disabled:opacity-50"
                 >
-                  {(membersLoading || reservationsLoading) && (
+                  {(membersLoading || reservationsLoading || upstreamInvitesLoading) && (
                     <svg className="animate-spin h-4 w-4 text-violet-600" viewBox="0 0 24 24" aria-hidden="true">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
                   )}
-                  {membersLoading || reservationsLoading ? "加载中..." : "刷新"}
+                  {membersLoading || reservationsLoading || upstreamInvitesLoading
+                    ? "加载中..."
+                    : "刷新"}
                 </button>
                 <button
                   onClick={closeMembersModal}
@@ -1753,6 +1967,17 @@ export default function TeamsPage() {
                   </div>
                   <div className="text-sm text-zinc-600 dark:text-zinc-300">
                     占位来自邀请码兑换产生的邀请记录（状态为 PENDING/SUCCESS）。SUCCESS 仅表示邀请邮件发送成功，是否已加入请对照成员列表。释放占位不会撤销上游邀请，只影响本系统的名额判断。
+                  </div>
+                </div>
+              )}
+
+              {membersTab === "upstreamInvites" && (
+                <div className="mb-5 rounded-xl border border-zinc-200/70 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 p-4">
+                  <div className="text-sm font-medium text-zinc-900 dark:text-white mb-1">
+                    上游邀请说明
+                  </div>
+                  <div className="text-sm text-zinc-600 dark:text-zinc-300">
+                    这里展示的是 ChatGPT 官网侧的 Pending invites。它们会占用上游 seats（尤其是 free trial），导致即使成员没满也无法再邀请。取消上游邀请会在 ChatGPT 官网侧删除 pending invite，用于释放 seats，但不会影响本系统的本地占位记录。
                   </div>
                 </div>
               )}
@@ -2032,6 +2257,151 @@ export default function TeamsPage() {
                                     className="px-4 py-10 text-center text-zinc-600 dark:text-zinc-400"
                                   >
                                     暂无占位记录
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {membersTab === "upstreamInvites" && (
+                <div>
+                  {upstreamInvitesLoading && (
+                    <div className="text-sm text-zinc-600 dark:text-zinc-300">
+                      正在获取上游邀请...
+                    </div>
+                  )}
+
+                  {!upstreamInvitesLoading && upstreamInvitesError && (
+                    <div role="alert" className="bg-red-50/80 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
+                      <div className="text-sm text-red-700 dark:text-red-300">
+                        {upstreamInvitesError}
+                      </div>
+                      <button
+                        onClick={() => fetchUpstreamInvites(membersModalTeam)}
+                        className="mt-3 px-4 py-2.5 text-sm bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-zinc-900"
+                      >
+                        重试
+                      </button>
+                    </div>
+                  )}
+
+                  {!upstreamInvitesLoading && !upstreamInvitesError && (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="text-sm text-zinc-600 dark:text-zinc-300">
+                          共 {upstreamInvitesTotal ?? upstreamInvites.length} 条上游邀请
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={selectAllUpstreamInvites}
+                            className="px-4 py-2 rounded-xl border border-violet-200/70 dark:border-violet-500/25 bg-white/70 dark:bg-zinc-900/40 text-sm text-zinc-900 dark:text-white hover:bg-white dark:hover:bg-zinc-900/60 transition-colors"
+                          >
+                            全选
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelSelectedUpstreamInvites}
+                            disabled={upstreamInviteActionLoading}
+                            className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white text-sm font-medium rounded-xl transition-colors disabled:opacity-60"
+                          >
+                            {upstreamInviteActionLoading
+                              ? "处理中..."
+                              : "取消选中上游邀请"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {upstreamInviteActionError && (
+                        <div role="alert" className="bg-red-50/80 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3">
+                          <div className="text-sm text-red-700 dark:text-red-300">
+                            {upstreamInviteActionError}
+                          </div>
+                        </div>
+                      )}
+
+                      {upstreamInviteActionSuccess && (
+                        <div role="status" className="bg-green-50/80 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl p-3">
+                          <div className="text-sm text-green-700 dark:text-green-300">
+                            {upstreamInviteActionSuccess}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="rounded-xl border border-zinc-200/70 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 overflow-hidden">
+                        <div className="max-h-[65vh] overflow-auto">
+                          <table className="w-full text-sm">
+                            <thead className="bg-violet-50/70 dark:bg-violet-500/10 sticky top-0">
+                              <tr>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+                                  选择
+                                </th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+                                  邮箱
+                                </th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+                                  角色
+                                </th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+                                  创建时间
+                                </th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+                                  ID
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800">
+                              {upstreamInvites.map((item) => {
+                                const checked = Boolean(
+                                  upstreamInviteSelection[item.id]
+                                );
+                                return (
+                                  <tr
+                                    key={item.id}
+                                    className="hover:bg-violet-50/50 dark:hover:bg-violet-500/10 transition-colors"
+                                  >
+                                    <td className="px-4 py-3">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(e) =>
+                                          setUpstreamInviteSelection((prev) => ({
+                                            ...prev,
+                                            [item.id]: e.target.checked,
+                                          }))
+                                        }
+                                      />
+                                    </td>
+                                    <td className="px-4 py-3 text-zinc-900 dark:text-white font-mono text-xs">
+                                      {item.email}
+                                    </td>
+                                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
+                                      {item.role || "-"}
+                                    </td>
+                                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
+                                      {item.createdAt
+                                        ? new Date(item.createdAt).toLocaleString()
+                                        : "-"}
+                                    </td>
+                                    <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400 font-mono text-xs">
+                                      {item.id}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                              {upstreamInvites.length === 0 && (
+                                <tr>
+                                  <td
+                                    colSpan={5}
+                                    className="px-4 py-10 text-center text-zinc-600 dark:text-zinc-400"
+                                  >
+                                    暂无上游邀请
                                   </td>
                                 </tr>
                               )}

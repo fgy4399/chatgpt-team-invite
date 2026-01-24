@@ -41,12 +41,39 @@ export interface TeamMember {
   createdAt: string;
 }
 
+export interface TeamUpstreamInvite {
+  id: string;
+  email: string;
+  role: string;
+  createdAt: string;
+  isScimManaged?: boolean;
+}
+
 interface TeamMembersResult {
   success: boolean;
   members?: TeamMember[];
   total?: number;
   error?: string;
   status?: number;
+}
+
+interface TeamInvitesResult {
+  success: boolean;
+  invites?: TeamUpstreamInvite[];
+  total?: number;
+  offset?: number;
+  limit?: number;
+  error?: string;
+  requiresCookies?: boolean;
+  status?: number;
+}
+
+interface TeamCancelInvitesResult {
+  success: boolean;
+  error?: string;
+  requiresCookies?: boolean;
+  status?: number;
+  data?: unknown;
 }
 
 interface TeamMemberKickResult {
@@ -185,6 +212,270 @@ export async function sendTeamInviteForTeam(
       error: error instanceof Error ? error.message : "未知错误",
     };
   }
+}
+
+export async function listTeamInvitesForTeam(
+  accountId: string,
+  accessToken: string,
+  cookies?: string,
+  options?: { offset?: number; limit?: number; query?: string }
+): Promise<TeamInvitesResult> {
+  if (!accessToken || !accountId) {
+    return {
+      success: false,
+      error: "缺少 Access Token 或 Account ID",
+    };
+  }
+
+  const offset = Math.max(0, options?.offset ?? 0);
+  const limit = Math.min(100, Math.max(1, options?.limit ?? 25));
+  const query = options?.query ?? "";
+
+  const credentials: TeamCredentials = { accountId, accessToken, cookies };
+
+  try {
+    const search = new URLSearchParams();
+    search.set("offset", String(offset));
+    search.set("limit", String(limit));
+    search.set("query", query);
+
+    const url = `${CHATGPT_API_BASE}/accounts/${accountId}/invites?${search.toString()}`;
+    const response = await fetch(url, {
+      headers: getHeaders(credentials),
+    });
+
+    const status = response.status;
+    const bodyText = await response.text();
+
+    if (!response.ok) {
+      if (looksLikeCloudflareChallenge(bodyText)) {
+        return {
+          success: false,
+          error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+          requiresCookies: true,
+          status,
+        };
+      }
+
+      if (status === 401 || status === 403) {
+        return {
+          success: false,
+          error: "凭据无效或已过期（HTTP 401/403）",
+          status,
+        };
+      }
+
+      let errorMessage = `HTTP ${status}`;
+      try {
+        const errorJson = JSON.parse(bodyText) as Record<string, unknown>;
+        const detail =
+          typeof errorJson.detail === "string" ? errorJson.detail : undefined;
+        const message =
+          typeof errorJson.message === "string" ? errorJson.message : undefined;
+        errorMessage = detail || message || errorMessage;
+      } catch {
+        errorMessage = bodyText.slice(0, 200) || errorMessage;
+      }
+
+      return { success: false, error: errorMessage, status };
+    }
+
+    if (looksLikeCloudflareChallenge(bodyText)) {
+      return {
+        success: false,
+        error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+        requiresCookies: true,
+        status,
+      };
+    }
+
+    const trimmed = bodyText.trim();
+    if (trimmed && trimmed.startsWith("<")) {
+      return {
+        success: false,
+        error: "上游返回 HTML（可能被拦截/跳转），请检查 Cookies 或稍后重试",
+        status,
+      };
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(bodyText) as Record<string, unknown>;
+    } catch {
+      return {
+        success: false,
+        error: "邀请列表解析失败（非 JSON 响应）",
+        status,
+      };
+    }
+
+    const items = Array.isArray(parsed.items) ? parsed.items : [];
+    const invites: TeamUpstreamInvite[] = [];
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      const id = typeof row.id === "string" ? row.id : "";
+      const email =
+        typeof row.email_address === "string"
+          ? row.email_address
+          : typeof row.email === "string"
+            ? row.email
+            : "";
+      const role = typeof row.role === "string" ? row.role : "";
+      const createdAt =
+        typeof row.created_time === "string"
+          ? row.created_time
+          : typeof row.createdAt === "string"
+            ? row.createdAt
+            : "";
+      const isScimManaged =
+        typeof row.is_scim_managed === "boolean" ? row.is_scim_managed : undefined;
+
+      if (!id || !email) continue;
+      invites.push({ id, email, role, createdAt, isScimManaged });
+    }
+
+    const total = typeof parsed.total === "number" ? parsed.total : undefined;
+    const respOffset =
+      typeof parsed.offset === "number" ? parsed.offset : offset;
+    const respLimit = typeof parsed.limit === "number" ? parsed.limit : limit;
+
+    return {
+      success: true,
+      invites,
+      total: total ?? invites.length,
+      offset: respOffset,
+      limit: respLimit,
+      status,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+    };
+  }
+}
+
+export async function cancelTeamInvitesForTeam(
+  accountId: string,
+  accessToken: string,
+  inviteIds: string[],
+  cookies?: string
+): Promise<TeamCancelInvitesResult> {
+  if (!accessToken || !accountId) {
+    return {
+      success: false,
+      error: "缺少 Access Token 或 Account ID",
+    };
+  }
+
+  const ids = Array.isArray(inviteIds)
+    ? inviteIds.map((id) => String(id)).filter(Boolean)
+    : [];
+
+  if (ids.length === 0) {
+    return {
+      success: false,
+      error: "缺少 inviteIds",
+    };
+  }
+
+  const credentials: TeamCredentials = { accountId, accessToken, cookies };
+  const url = `${CHATGPT_API_BASE}/accounts/${accountId}/invites`;
+
+  const payloadCandidates: unknown[] = [
+    { invite_ids: ids },
+    { inviteIds: ids },
+    { ids },
+  ];
+  if (ids.length === 1) {
+    payloadCandidates.push({ invite_id: ids[0] });
+    payloadCandidates.push({ id: ids[0] });
+  }
+
+  let lastStatus: number | undefined;
+  let lastError: string | undefined;
+
+  for (const payload of payloadCandidates) {
+    try {
+      const response = await fetch(url, {
+        method: "DELETE",
+        headers: getHeaders(credentials),
+        body: JSON.stringify(payload),
+      });
+
+      const status = response.status;
+      lastStatus = status;
+      const bodyText = await response.text();
+
+      if (looksLikeCloudflareChallenge(bodyText)) {
+        return {
+          success: false,
+          error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+          requiresCookies: true,
+          status,
+        };
+      }
+
+      const trimmed = bodyText.trim();
+      if (trimmed && trimmed.startsWith("<")) {
+        return {
+          success: false,
+          error: "上游返回 HTML（可能被拦截/跳转），请检查 Cookies 或稍后重试",
+          status,
+        };
+      }
+
+      if (!response.ok) {
+        if (status === 401 || status === 403) {
+          return {
+            success: false,
+            error: "凭据无效或已过期（HTTP 401/403）",
+            status,
+          };
+        }
+
+        let errorMessage = `HTTP ${status}`;
+        try {
+          const errorJson = JSON.parse(bodyText) as Record<string, unknown>;
+          const detail =
+            typeof errorJson.detail === "string" ? errorJson.detail : undefined;
+          const message =
+            typeof errorJson.message === "string" ? errorJson.message : undefined;
+          errorMessage = detail || message || errorMessage;
+        } catch {
+          errorMessage = bodyText.slice(0, 200) || errorMessage;
+        }
+
+        lastError = errorMessage;
+        // 仅在参数错误时尝试下一种 payload，避免多次触发相同失败
+        if ([400, 404, 422].includes(status)) {
+          continue;
+        }
+
+        return { success: false, error: errorMessage, status };
+      }
+
+      if (!trimmed) {
+        return { success: true, status };
+      }
+
+      try {
+        const data = JSON.parse(bodyText) as unknown;
+        return { success: true, status, data };
+      } catch {
+        return { success: true, status, data: bodyText };
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "未知错误";
+    }
+  }
+
+  return {
+    success: false,
+    error: lastError || "取消邀请失败",
+    status: lastStatus,
+  };
 }
 
 export async function getTeamSubscriptionForTeam(
