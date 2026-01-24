@@ -58,9 +58,9 @@ export const GET = withAuth(async () => {
             data: { currentMembers: nextCount },
           })
         );
-        return { ...team, currentMembers: nextCount };
+        return { ...team, currentMembers: nextCount, reservedInvites };
       }
-      return team;
+      return { ...team, reservedInvites };
     });
 
     if (updates.length) {

@@ -10,6 +10,7 @@ interface Team {
   accountId: string;
   maxMembers: number;
   currentMembers: number;
+  reservedInvites?: number;
   isActive: boolean;
   expiresAt: string | null;
   priority: number;
@@ -26,6 +27,21 @@ interface TeamMember {
   email: string;
   role: string;
   createdAt: string;
+}
+
+interface TeamReservation {
+  id: string;
+  email: string;
+  status: string;
+  createdAt: string;
+  processedAt?: string | null;
+  inviteCode?: {
+    code: string;
+    status: string;
+    createdAt: string;
+    expiresAt?: string | null;
+    usedAt?: string | null;
+  };
 }
 
 interface NewTeam {
@@ -104,6 +120,9 @@ export default function TeamsPage() {
 
   const [membersModalOpen, setMembersModalOpen] = useState(false);
   const [membersModalTeam, setMembersModalTeam] = useState<Team | null>(null);
+  const [membersTab, setMembersTab] = useState<"members" | "reservations">(
+    "members"
+  );
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState("");
   const [members, setMembers] = useState<TeamMember[]>([]);
@@ -111,6 +130,18 @@ export default function TeamsPage() {
   const [kickSubmittingId, setKickSubmittingId] = useState<string | null>(null);
   const [kickError, setKickError] = useState("");
   const membersFetchControllerRef = useRef<AbortController | null>(null);
+
+  const [reservationsLoading, setReservationsLoading] = useState(false);
+  const [reservationsError, setReservationsError] = useState("");
+  const [reservations, setReservations] = useState<TeamReservation[]>([]);
+  const [reservationSelection, setReservationSelection] = useState<
+    Record<string, boolean>
+  >({});
+  const [reservationActionLoading, setReservationActionLoading] =
+    useState(false);
+  const [reservationActionError, setReservationActionError] = useState("");
+  const [reservationActionSuccess, setReservationActionSuccess] = useState("");
+  const reservationsFetchControllerRef = useRef<AbortController | null>(null);
 
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [inviteModalTeam, setInviteModalTeam] = useState<Team | null>(null);
@@ -127,6 +158,10 @@ export default function TeamsPage() {
   >({});
 
   const getToken = () => localStorage.getItem("admin_token");
+  const memberEmailSet = new Set(members.map((member) => member.email.toLowerCase()));
+  const notJoinedReservationCount = reservations.filter(
+    (item) => !memberEmailSet.has(item.email.toLowerCase())
+  ).length;
 
   const openInviteModal = (team: Team) => {
     setInviteModalTeam(team);
@@ -293,15 +328,92 @@ export default function TeamsPage() {
   const closeMembersModal = useCallback(() => {
     membersFetchControllerRef.current?.abort();
     membersFetchControllerRef.current = null;
+    reservationsFetchControllerRef.current?.abort();
+    reservationsFetchControllerRef.current = null;
     setMembersModalOpen(false);
     setMembersModalTeam(null);
+    setMembersTab("members");
     setMembersLoading(false);
     setMembersError("");
     setMembers([]);
     setMembersTotal(null);
     setKickSubmittingId(null);
     setKickError("");
+    setReservationsLoading(false);
+    setReservationsError("");
+    setReservations([]);
+    setReservationSelection({});
+    setReservationActionLoading(false);
+    setReservationActionError("");
+    setReservationActionSuccess("");
   }, []);
+
+  const fetchTeamReservations = useCallback(
+    async (team: Team) => {
+      const token = getToken();
+      if (!token) {
+        router.push("/admin");
+        return;
+      }
+
+      reservationsFetchControllerRef.current?.abort();
+      const controller = new AbortController();
+      reservationsFetchControllerRef.current = controller;
+
+      setReservationsLoading(true);
+      setReservationsError("");
+      setReservationActionError("");
+      setReservationActionSuccess("");
+      setReservationSelection({});
+      setReservations([]);
+
+      try {
+        const res = await fetch(`/api/admin/teams/${team.id}/reservations`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+
+        if (res.status === 401) {
+          localStorage.removeItem("admin_token");
+          router.push("/admin");
+          return;
+        }
+
+        type TeamReservationsApiResponse = {
+          reservations?: TeamReservation[];
+          error?: string;
+        };
+
+        const data = (await res
+          .json()
+          .catch(() => ({}))) as Partial<TeamReservationsApiResponse>;
+
+        if (reservationsFetchControllerRef.current !== controller) {
+          return;
+        }
+
+        if (res.ok) {
+          setReservations(
+            Array.isArray(data.reservations)
+              ? (data.reservations as TeamReservation[])
+              : []
+          );
+        } else {
+          setReservationsError(data.error || "获取占位列表失败");
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setReservationsError("获取占位列表失败，请稍后重试");
+      } finally {
+        if (reservationsFetchControllerRef.current === controller) {
+          setReservationsLoading(false);
+        }
+      }
+    },
+    [router]
+  );
 
   useEffect(() => {
     if (!inviteModalOpen && !membersModalOpen) return;
@@ -636,8 +748,193 @@ export default function TeamsPage() {
   const handleViewMembers = async (team: Team) => {
     setMembersModalTeam(team);
     setMembersModalOpen(true);
+    setMembersTab("members");
     setKickError("");
-    await fetchTeamMembers(team);
+    await Promise.all([fetchTeamMembers(team), fetchTeamReservations(team)]);
+  };
+
+  const releaseSelectedReservations = async () => {
+    const team = membersModalTeam;
+    if (!team) return;
+
+    const token = getToken();
+    if (!token) {
+      router.push("/admin");
+      return;
+    }
+
+    const invitationIds = Object.keys(reservationSelection).filter(
+      (id) => reservationSelection[id]
+    );
+
+    if (invitationIds.length === 0) {
+      setReservationActionError("请先选择要释放的占位记录");
+      return;
+    }
+
+    if (
+      !confirm(
+        `确定要释放选中的 ${invitationIds.length} 个占位吗？这不会取消上游邀请，但会让系统释放本地占位。`
+      )
+    ) {
+      return;
+    }
+
+    setReservationActionLoading(true);
+    setReservationActionError("");
+    setReservationActionSuccess("");
+
+    try {
+      const actualMemberCount =
+        typeof membersTotal === "number" ? membersTotal : undefined;
+
+      const res = await fetch(`/api/admin/teams/${team.id}/reservations`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "release",
+          invitationIds,
+          actualMemberCount,
+        }),
+      });
+
+      if (res.status === 401) {
+        localStorage.removeItem("admin_token");
+        router.push("/admin");
+        return;
+      }
+
+      type ReleaseApiResponse = {
+        success?: boolean;
+        releasedCount?: number;
+        currentMembers?: number;
+        warning?: string;
+        error?: string;
+      };
+
+      const data = (await res
+        .json()
+        .catch(() => ({}))) as Partial<ReleaseApiResponse>;
+
+      if (!res.ok || !data.success) {
+        setReservationActionError(data.error || "释放占位失败");
+        return;
+      }
+
+      const released = typeof data.releasedCount === "number" ? data.releasedCount : 0;
+      const warning = typeof data.warning === "string" && data.warning ? `（${data.warning}）` : "";
+      setReservationActionSuccess(`已释放 ${released} 个占位${warning}`);
+
+      if (typeof data.currentMembers === "number") {
+        setMembersModalTeam((prev) =>
+          prev && prev.id === team.id ? { ...prev, currentMembers: data.currentMembers } : prev
+        );
+        setTeams((prev) =>
+          prev.map((item) =>
+            item.id === team.id ? { ...item, currentMembers: data.currentMembers } : item
+          )
+        );
+      }
+
+      await fetchTeamReservations(team);
+      await fetchTeams();
+    } catch (error) {
+      setReservationActionError(
+        error instanceof Error ? error.message : "释放占位失败，请稍后重试"
+      );
+    } finally {
+      setReservationActionLoading(false);
+    }
+  };
+
+  const recalculateTeamOccupancy = async () => {
+    const team = membersModalTeam;
+    if (!team) return;
+
+    const token = getToken();
+    if (!token) {
+      router.push("/admin");
+      return;
+    }
+
+    setReservationActionLoading(true);
+    setReservationActionError("");
+    setReservationActionSuccess("");
+
+    try {
+      const actualMemberCount =
+        typeof membersTotal === "number" ? membersTotal : undefined;
+
+      const res = await fetch(`/api/admin/teams/${team.id}/reservations`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "recalculate",
+          actualMemberCount,
+        }),
+      });
+
+      if (res.status === 401) {
+        localStorage.removeItem("admin_token");
+        router.push("/admin");
+        return;
+      }
+
+      type RecalculateApiResponse = {
+        success?: boolean;
+        currentMembers?: number;
+        warning?: string;
+        error?: string;
+      };
+
+      const data = (await res
+        .json()
+        .catch(() => ({}))) as Partial<RecalculateApiResponse>;
+
+      if (!res.ok || !data.success) {
+        setReservationActionError(data.error || "重新计算失败");
+        return;
+      }
+
+      const warning = typeof data.warning === "string" && data.warning ? `（${data.warning}）` : "";
+      setReservationActionSuccess(`已重新计算占用数${warning}`);
+
+      if (typeof data.currentMembers === "number") {
+        setMembersModalTeam((prev) =>
+          prev && prev.id === team.id ? { ...prev, currentMembers: data.currentMembers } : prev
+        );
+        setTeams((prev) =>
+          prev.map((item) =>
+            item.id === team.id ? { ...item, currentMembers: data.currentMembers } : item
+          )
+        );
+      }
+
+      await fetchTeamReservations(team);
+      await fetchTeams();
+    } catch (error) {
+      setReservationActionError(
+        error instanceof Error ? error.message : "重新计算失败，请稍后重试"
+      );
+    } finally {
+      setReservationActionLoading(false);
+    }
+  };
+
+  const selectUnmatchedReservations = () => {
+    const next: Record<string, boolean> = {};
+    for (const item of reservations) {
+      if (!memberEmailSet.has(item.email.toLowerCase())) {
+        next[item.id] = true;
+      }
+    }
+    setReservationSelection(next);
   };
 
   const handleKickMember = async (member: TeamMember) => {
@@ -1184,6 +1481,9 @@ export default function TeamsPage() {
                     </td>
                     <td className="px-6 py-4 text-sm text-zinc-600 dark:text-zinc-400">
                       {team._count.invitations}
+                      <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                        占位 {team.reservedInvites ?? 0}
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-nowrap items-center gap-2">
@@ -1212,7 +1512,7 @@ export default function TeamsPage() {
                           onClick={() => handleViewMembers(team)}
                           className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-zinc-700 hover:text-zinc-900 hover:bg-white dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900/40 transition-colors whitespace-nowrap"
                         >
-                          查看成员
+                          对账
                         </button>
                         <button
                           onClick={() => handleStartEdit(team)}
@@ -1251,6 +1551,7 @@ export default function TeamsPage() {
             <li>成员上限设为 0 表示无限制</li>
             <li>到期时间会在添加团队时自动从 ChatGPT 订阅信息获取，到期后团队将不再接收新邀请</li>
             <li>点击“邀请”可指定某个团队手动发送邀请邮件</li>
+            <li>点击“对账”可对比真实成员与占位邀请，并按需释放占位</li>
             <li>点击“检测”可实时检查团队凭据有效性（可能受到 Cloudflare/限流影响）</li>
             <li>列表支持单个团队“同步”，必要时再用顶部“同步全部”</li>
             <li>禁用的团队不会接收新邀请</li>
@@ -1370,25 +1671,68 @@ export default function TeamsPage() {
             <div className="px-6 py-4 border-b border-zinc-200/70 dark:border-zinc-800 bg-violet-50/70 dark:bg-violet-500/10 flex items-center justify-between">
               <div>
                 <h2 id="members-modal-title" className="text-lg font-semibold text-zinc-900 dark:text-white">
-                  成员列表：{membersModalTeam.name}
+                  对账：{membersModalTeam.name}
                 </h2>
                 <div className="text-xs text-zinc-600 dark:text-zinc-300">
-                  {membersTotal !== null ? `共 ${membersTotal} 人` : " "}
+                  <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span>
+                      当前占用{" "}
+                      {membersModalTeam.currentMembers} /{" "}
+                      {membersModalTeam.maxMembers === 0
+                        ? "∞"
+                        : membersModalTeam.maxMembers}
+                    </span>
+                    <span className="text-zinc-400">·</span>
+                    <span>真实成员 {membersTotal ?? "-"}</span>
+                    <span className="text-zinc-400">·</span>
+                    <span>占位 {reservations.length}</span>
+                    <span className="text-zinc-400">·</span>
+                    <span>未加入 {notJoinedReservationCount}</span>
+                  </span>
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                <div className="inline-flex rounded-xl border border-violet-200/70 dark:border-violet-500/25 bg-white/70 dark:bg-zinc-900/40 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setMembersTab("members")}
+                    className={`px-3 py-2 text-sm transition-colors ${
+                      membersTab === "members"
+                        ? "bg-violet-600 text-white"
+                        : "text-zinc-700 hover:text-zinc-900 hover:bg-white dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900/60"
+                    }`}
+                  >
+                    成员
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMembersTab("reservations")}
+                    className={`px-3 py-2 text-sm transition-colors ${
+                      membersTab === "reservations"
+                        ? "bg-violet-600 text-white"
+                        : "text-zinc-700 hover:text-zinc-900 hover:bg-white dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900/60"
+                    }`}
+                  >
+                    占位
+                  </button>
+                </div>
                 <button
-                  onClick={() => fetchTeamMembers(membersModalTeam)}
-                  disabled={membersLoading}
+                  onClick={() =>
+                    Promise.all([
+                      fetchTeamMembers(membersModalTeam),
+                      fetchTeamReservations(membersModalTeam),
+                    ])
+                  }
+                  disabled={membersLoading || reservationsLoading}
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-violet-200/70 dark:border-violet-500/25 bg-white/70 dark:bg-zinc-900/40 text-sm text-zinc-900 dark:text-white hover:bg-white dark:hover:bg-zinc-900/60 transition-colors disabled:opacity-50"
                 >
-                  {membersLoading && (
+                  {(membersLoading || reservationsLoading) && (
                     <svg className="animate-spin h-4 w-4 text-violet-600" viewBox="0 0 24 24" aria-hidden="true">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
                   )}
-                  {membersLoading ? "加载中..." : "刷新"}
+                  {membersLoading || reservationsLoading ? "加载中..." : "刷新"}
                 </button>
                 <button
                   onClick={closeMembersModal}
@@ -1400,6 +1744,17 @@ export default function TeamsPage() {
             </div>
 
             <div className="p-6">
+              {membersTab === "reservations" && (
+                <div className="mb-5 rounded-xl border border-zinc-200/70 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 p-4">
+                  <div className="text-sm font-medium text-zinc-900 dark:text-white mb-1">
+                    占位说明
+                  </div>
+                  <div className="text-sm text-zinc-600 dark:text-zinc-300">
+                    占位来自邀请码兑换产生的邀请记录（状态为 PENDING/SUCCESS）。SUCCESS 仅表示邀请邮件发送成功，是否已加入请对照成员列表。释放占位不会撤销上游邀请，只影响本系统的名额判断。
+                  </div>
+                </div>
+              )}
+
               {membersLoading && (
                 <div className="text-sm text-zinc-600 dark:text-zinc-300">
                   正在获取成员列表...
@@ -1420,7 +1775,7 @@ export default function TeamsPage() {
                 </div>
               )}
 
-              {!membersLoading && !membersError && kickError && (
+              {!membersLoading && !membersError && membersTab === "members" && kickError && (
                 <div
                   role="alert"
                   className="mb-4 bg-red-50/80 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4"
@@ -1431,7 +1786,7 @@ export default function TeamsPage() {
                 </div>
               )}
 
-              {!membersLoading && !membersError && (
+              {!membersLoading && !membersError && membersTab === "members" && (
                 <div className="rounded-xl border border-zinc-200/70 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 overflow-hidden">
                   <div className="max-h-[65vh] overflow-auto">
                     <table className="w-full text-sm">
@@ -1509,6 +1864,181 @@ export default function TeamsPage() {
                       </tbody>
                     </table>
                   </div>
+                </div>
+              )}
+
+              {membersTab === "reservations" && (
+                <div>
+                  {reservationsLoading && (
+                    <div className="text-sm text-zinc-600 dark:text-zinc-300">
+                      正在获取占位列表...
+                    </div>
+                  )}
+
+                  {!reservationsLoading && reservationsError && (
+                    <div role="alert" className="bg-red-50/80 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
+                      <div className="text-sm text-red-700 dark:text-red-300">
+                        {reservationsError}
+                      </div>
+                      <button
+                        onClick={() => fetchTeamReservations(membersModalTeam)}
+                        className="mt-3 px-4 py-2.5 text-sm bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-zinc-900"
+                      >
+                        重试
+                      </button>
+                    </div>
+                  )}
+
+                  {!reservationsLoading && !reservationsError && (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="text-sm text-zinc-600 dark:text-zinc-300">
+                          共 {reservations.length} 条占位记录
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={selectUnmatchedReservations}
+                            className="px-4 py-2 rounded-xl border border-violet-200/70 dark:border-violet-500/25 bg-white/70 dark:bg-zinc-900/40 text-sm text-zinc-900 dark:text-white hover:bg-white dark:hover:bg-zinc-900/60 transition-colors"
+                          >
+                            选择未加入
+                          </button>
+                          <button
+                            type="button"
+                            onClick={recalculateTeamOccupancy}
+                            disabled={reservationActionLoading}
+                            className="px-4 py-2 rounded-xl border border-violet-200/70 dark:border-violet-500/25 bg-white/70 dark:bg-zinc-900/40 text-sm text-zinc-900 dark:text-white hover:bg-white dark:hover:bg-zinc-900/60 transition-colors disabled:opacity-50"
+                          >
+                            重新计算占用数
+                          </button>
+                          <button
+                            type="button"
+                            onClick={releaseSelectedReservations}
+                            disabled={reservationActionLoading}
+                            className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white text-sm font-medium rounded-xl transition-colors disabled:opacity-60"
+                          >
+                            {reservationActionLoading ? "处理中..." : "释放选中占位"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {reservationActionError && (
+                        <div role="alert" className="bg-red-50/80 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-3">
+                          <div className="text-sm text-red-700 dark:text-red-300">
+                            {reservationActionError}
+                          </div>
+                        </div>
+                      )}
+
+                      {reservationActionSuccess && (
+                        <div role="status" className="bg-green-50/80 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl p-3">
+                          <div className="text-sm text-green-700 dark:text-green-300">
+                            {reservationActionSuccess}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="rounded-xl border border-zinc-200/70 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 overflow-hidden">
+                        <div className="max-h-[65vh] overflow-auto">
+                          <table className="w-full text-sm">
+                            <thead className="bg-violet-50/70 dark:bg-violet-500/10 sticky top-0">
+                              <tr>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+                                  选择
+                                </th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+                                  邮箱
+                                </th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+                                  邀请状态
+                                </th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+                                  邀请码
+                                </th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+                                  创建时间
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800">
+                              {reservations.map((item) => {
+                                const joined = memberEmailSet.has(
+                                  item.email.toLowerCase()
+                                );
+                                const checked = Boolean(reservationSelection[item.id]);
+                                const statusColor =
+                                  item.status === "SUCCESS"
+                                    ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
+                                    : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300";
+                                const statusLabel =
+                                  item.status === "SUCCESS" ? "已发送" : "处理中";
+                                return (
+                                  <tr
+                                    key={item.id}
+                                    className="hover:bg-violet-50/50 dark:hover:bg-violet-500/10 transition-colors"
+                                  >
+                                    <td className="px-4 py-3">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(e) =>
+                                          setReservationSelection((prev) => ({
+                                            ...prev,
+                                            [item.id]: e.target.checked,
+                                          }))
+                                        }
+                                      />
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <div className="flex flex-col gap-1">
+                                        <span className="text-zinc-900 dark:text-white font-mono text-xs">
+                                          {item.email}
+                                        </span>
+                                        <span
+                                          className={`text-xs ${
+                                            joined
+                                              ? "text-green-600 dark:text-green-300"
+                                              : "text-zinc-500 dark:text-zinc-400"
+                                          }`}
+                                        >
+                                          {joined ? "已加入" : "未加入"}
+                                        </span>
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <span
+                                        className={`px-2 py-1 rounded text-xs font-medium ${statusColor}`}
+                                      >
+                                        {statusLabel}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300 font-mono text-xs">
+                                      {item.inviteCode?.code || "-"}
+                                    </td>
+                                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">
+                                      {item.createdAt
+                                        ? new Date(item.createdAt).toLocaleString()
+                                        : "-"}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                              {reservations.length === 0 && (
+                                <tr>
+                                  <td
+                                    colSpan={5}
+                                    className="px-4 py-10 text-center text-zinc-600 dark:text-zinc-400"
+                                  >
+                                    暂无占位记录
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
