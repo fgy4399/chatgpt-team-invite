@@ -829,12 +829,13 @@ export default function TeamsPage() {
       setReservationActionSuccess(`已释放 ${released} 个占位${warning}`);
 
       if (typeof data.currentMembers === "number") {
+        const nextCurrentMembers = data.currentMembers;
         setMembersModalTeam((prev) =>
-          prev && prev.id === team.id ? { ...prev, currentMembers: data.currentMembers } : prev
+          prev && prev.id === team.id ? { ...prev, currentMembers: nextCurrentMembers } : prev
         );
         setTeams((prev) =>
           prev.map((item) =>
-            item.id === team.id ? { ...item, currentMembers: data.currentMembers } : item
+            item.id === team.id ? { ...item, currentMembers: nextCurrentMembers } : item
           )
         );
       }
@@ -906,12 +907,13 @@ export default function TeamsPage() {
       setReservationActionSuccess(`已重新计算占用数${warning}`);
 
       if (typeof data.currentMembers === "number") {
+        const nextCurrentMembers = data.currentMembers;
         setMembersModalTeam((prev) =>
-          prev && prev.id === team.id ? { ...prev, currentMembers: data.currentMembers } : prev
+          prev && prev.id === team.id ? { ...prev, currentMembers: nextCurrentMembers } : prev
         );
         setTeams((prev) =>
           prev.map((item) =>
-            item.id === team.id ? { ...item, currentMembers: data.currentMembers } : item
+            item.id === team.id ? { ...item, currentMembers: nextCurrentMembers } : item
           )
         );
       }
