@@ -135,6 +135,8 @@ export async function POST(
     const body = (await req.json().catch(() => ({}))) as Partial<{
       action: string;
       inviteIds: string[];
+      inviteEmails: string[];
+      emails: string[];
     }>;
 
     if (body.action && body.action !== "cancel") {
@@ -144,9 +146,12 @@ export async function POST(
     const inviteIds = Array.isArray(body.inviteIds)
       ? body.inviteIds.map((v) => String(v)).filter(Boolean)
       : [];
-    if (inviteIds.length === 0) {
-      return NextResponse.json({ error: "缺少 inviteIds" }, { status: 400 });
-    }
+    const inviteEmails = Array.isArray(body.inviteEmails)
+      ? body.inviteEmails.map((v) => String(v)).filter(Boolean)
+      : [];
+    const emails = Array.isArray(body.emails)
+      ? body.emails.map((v) => String(v)).filter(Boolean)
+      : [];
 
     const team = await prisma.team.findUnique({
       where: { id },
@@ -170,11 +175,69 @@ export async function POST(
       );
     }
 
+    let targetEmails = emails.length > 0 ? emails : inviteEmails;
+    if (targetEmails.length === 0 && inviteIds.length > 0) {
+      // 兼容旧前端：只传了 inviteIds（UUID）。上游删除接口实际需要 email_address，
+      // 这里通过上游 invites 列表把 id 映射回 email。
+      const missing = new Set(inviteIds);
+      const mappedEmails: string[] = [];
+
+      const limit = 100;
+      let offset = 0;
+      for (let i = 0; i < 10 && missing.size > 0; i++) {
+        const page = await withTeamTokenRefresh(team, (credentials) =>
+          listTeamInvitesForTeam(
+            credentials.accountId,
+            credentials.accessToken,
+            credentials.cookies,
+            { offset, limit, query: "" }
+          )
+        );
+
+        if (!page.success) {
+          return NextResponse.json(
+            { error: page.error || "获取上游邀请失败" },
+            { status: page.status ?? 502 }
+          );
+        }
+
+        const items = page.invites || [];
+        for (const item of items) {
+          if (missing.has(item.id)) {
+            mappedEmails.push(item.email);
+            missing.delete(item.id);
+          }
+        }
+
+        if (items.length < limit) break;
+        offset += limit;
+      }
+
+      if (missing.size > 0) {
+        return NextResponse.json(
+          {
+            error:
+              "部分上游邀请未找到（可能已被取消/列表变化），请刷新后再试",
+          },
+          { status: 400 }
+        );
+      }
+
+      targetEmails = mappedEmails;
+    }
+
+    if (targetEmails.length === 0) {
+      return NextResponse.json(
+        { error: "缺少 inviteEmails" },
+        { status: 400 }
+      );
+    }
+
     const result = await withTeamTokenRefresh(team, (credentials) =>
       cancelTeamInvitesForTeam(
         credentials.accountId,
         credentials.accessToken,
-        inviteIds,
+        targetEmails,
         credentials.cookies
       )
     );
@@ -188,7 +251,7 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      cancelledCount: inviteIds.length,
+      cancelledCount: targetEmails.length,
       teamId: team.id,
       teamName: team.name,
     });
@@ -200,4 +263,3 @@ export async function POST(
     );
   }
 }
-

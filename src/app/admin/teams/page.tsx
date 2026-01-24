@@ -1078,9 +1078,21 @@ export default function TeamsPage() {
       return;
     }
 
+    const inviteEmails = upstreamInvites
+      .filter((item) => inviteIds.includes(item.id))
+      .map((item) => item.email)
+      .filter(Boolean);
+
+    if (inviteEmails.length !== inviteIds.length) {
+      setUpstreamInviteActionError(
+        "上游邀请列表已变化，请先点击“刷新”后再试"
+      );
+      return;
+    }
+
     if (
       !confirm(
-        `确定要取消选中的 ${inviteIds.length} 个上游邀请吗？这会在 ChatGPT 官网侧删除 pending invite，用于释放占用的 seats。`
+        `确定要取消选中的 ${inviteEmails.length} 个上游邀请吗？这会在 ChatGPT 官网侧删除 pending invite，用于释放占用的 seats。`
       )
     ) {
       return;
@@ -1097,7 +1109,7 @@ export default function TeamsPage() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ action: "cancel", inviteIds }),
+        body: JSON.stringify({ action: "cancel", inviteEmails }),
       });
 
       if (res.status === 401) {

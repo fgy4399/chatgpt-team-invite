@@ -121,6 +121,10 @@ docker compose run --rm app npx --no-install prisma migrate deploy
 
 ## 更新日志（Changelog）
 
+### [1.0.13] - 2026-01-24
+#### 修复
+- 修复“上游邀请”取消失败（HTTP 422）：对齐 ChatGPT 官网删除 Pending invite 的请求 payload（`email_address`）。
+
 ### [1.0.12] - 2026-01-24
 #### 新增
 - 管理后台团队“对账”弹窗新增“上游邀请”Tab：可查看 ChatGPT 官网 Pending invites 并批量取消，用于释放上游 seats（尤其是 free trial）。

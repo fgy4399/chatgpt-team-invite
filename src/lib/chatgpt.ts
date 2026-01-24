@@ -356,6 +356,104 @@ export async function listTeamInvitesForTeam(
   }
 }
 
+function isEmailLike(value: string): boolean {
+  return value.includes("@");
+}
+
+export async function cancelTeamInviteByEmailForTeam(
+  accountId: string,
+  accessToken: string,
+  email: string,
+  cookies?: string
+): Promise<TeamCancelInvitesResult> {
+  if (!accessToken || !accountId) {
+    return {
+      success: false,
+      error: "缺少 Access Token 或 Account ID",
+    };
+  }
+
+  const normalizedEmail = String(email).trim();
+  if (!normalizedEmail) {
+    return {
+      success: false,
+      error: "缺少 email_address",
+    };
+  }
+
+  const credentials: TeamCredentials = { accountId, accessToken, cookies };
+  const url = `${CHATGPT_API_BASE}/accounts/${accountId}/invites`;
+
+  try {
+    const response = await fetch(url, {
+      method: "DELETE",
+      headers: getHeaders(credentials),
+      body: JSON.stringify({ email_address: normalizedEmail }),
+    });
+
+    const status = response.status;
+    const bodyText = await response.text();
+
+    if (looksLikeCloudflareChallenge(bodyText)) {
+      return {
+        success: false,
+        error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+        requiresCookies: true,
+        status,
+      };
+    }
+
+    const trimmed = bodyText.trim();
+    if (trimmed && trimmed.startsWith("<")) {
+      return {
+        success: false,
+        error: "上游返回 HTML（可能被拦截/跳转），请检查 Cookies 或稍后重试",
+        status,
+      };
+    }
+
+    if (!response.ok) {
+      if (status === 401 || status === 403) {
+        return {
+          success: false,
+          error: "凭据无效或已过期（HTTP 401/403）",
+          status,
+        };
+      }
+
+      let errorMessage = `HTTP ${status}`;
+      try {
+        const errorJson = JSON.parse(bodyText) as Record<string, unknown>;
+        const detail =
+          typeof errorJson.detail === "string" ? errorJson.detail : undefined;
+        const message =
+          typeof errorJson.message === "string" ? errorJson.message : undefined;
+        errorMessage = detail || message || errorMessage;
+      } catch {
+        errorMessage = bodyText.slice(0, 200) || errorMessage;
+      }
+
+      return { success: false, error: errorMessage, status };
+    }
+
+    if (!trimmed) {
+      return { success: true, status };
+    }
+
+    try {
+      const data = JSON.parse(bodyText) as unknown;
+      return { success: true, status, data };
+    } catch {
+      return { success: true, status, data: bodyText };
+    }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+    };
+  }
+}
+
 export async function cancelTeamInvitesForTeam(
   accountId: string,
   accessToken: string,
@@ -377,6 +475,44 @@ export async function cancelTeamInvitesForTeam(
     return {
       success: false,
       error: "缺少 inviteIds",
+    };
+  }
+
+  // ChatGPT 官网删除 Pending invites 的请求 payload 是 { email_address: "xxx" }
+  // 为了兼容：当传入的是 email 列表时，按 email_address 逐个删除（更稳）
+  if (ids.every(isEmailLike)) {
+    if (ids.length === 1) {
+      return cancelTeamInviteByEmailForTeam(
+        accountId,
+        accessToken,
+        ids[0],
+        cookies
+      );
+    }
+
+    let lastStatus: number | undefined;
+    for (const email of ids) {
+      const result = await cancelTeamInviteByEmailForTeam(
+        accountId,
+        accessToken,
+        email,
+        cookies
+      );
+      if (!result.success) {
+        return {
+          ...result,
+          error: `取消上游邀请失败（${email}）：${result.error || "未知错误"}`,
+        };
+      }
+      if (typeof result.status === "number") {
+        lastStatus = result.status;
+      }
+    }
+
+    return {
+      success: true,
+      status: lastStatus ?? 200,
+      data: { success: true, cancelledCount: ids.length },
     };
   }
 
