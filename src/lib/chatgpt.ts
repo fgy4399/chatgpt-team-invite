@@ -33,6 +33,14 @@ interface TeamSubscriptionResult {
   status?: number;
 }
 
+interface TeamSubscriptionCancelResult {
+  success: boolean;
+  error?: string;
+  requiresCookies?: boolean;
+  status?: number;
+  data?: unknown;
+}
+
 export interface TeamMember {
   id: string;
   name: string;
@@ -77,6 +85,13 @@ interface TeamCancelInvitesResult {
 }
 
 interface TeamMemberKickResult {
+  success: boolean;
+  error?: string;
+  requiresCookies?: boolean;
+  status?: number;
+}
+
+interface TeamMemberRoleUpdateResult {
   success: boolean;
   error?: string;
   requiresCookies?: boolean;
@@ -744,6 +759,95 @@ export async function getTeamSubscriptionForTeam(
   }
 }
 
+// 取消团队订阅自动续费
+export async function cancelTeamSubscriptionForTeam(
+  accountId: string,
+  accessToken: string,
+  cookies?: string
+): Promise<TeamSubscriptionCancelResult> {
+  if (!accessToken || !accountId) {
+    return {
+      success: false,
+      error: "缺少 Access Token 或 Account ID",
+    };
+  }
+
+  const credentials: TeamCredentials = { accountId, accessToken, cookies };
+
+  try {
+    const response = await fetch(`${CHATGPT_API_BASE}/subscriptions/cancel`, {
+      method: "POST",
+      headers: getHeaders(credentials),
+      body: JSON.stringify({ account_id: accountId }),
+    });
+
+    const status = response.status;
+    const bodyText = await response.text();
+
+    if (!response.ok) {
+      if (looksLikeCloudflareChallenge(bodyText)) {
+        return {
+          success: false,
+          error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+          requiresCookies: true,
+          status,
+        };
+      }
+
+      if (status === 401 || status === 403) {
+        return {
+          success: false,
+          error: "凭据无效或已过期（HTTP 401/403）",
+          status,
+        };
+      }
+
+      let errorMessage = `HTTP ${status}`;
+      try {
+        const errorJson = JSON.parse(bodyText) as Record<string, unknown>;
+        const detail =
+          typeof errorJson.detail === "string" ? errorJson.detail : undefined;
+        const message =
+          typeof errorJson.message === "string" ? errorJson.message : undefined;
+        errorMessage = detail || message || errorMessage;
+      } catch {
+        errorMessage = bodyText.slice(0, 200) || errorMessage;
+      }
+
+      return {
+        success: false,
+        error: errorMessage,
+        status,
+      };
+    }
+
+    if (looksLikeCloudflareChallenge(bodyText)) {
+      return {
+        success: false,
+        error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+        requiresCookies: true,
+        status,
+      };
+    }
+
+    if (!bodyText.trim()) {
+      return { success: true, status };
+    }
+
+    try {
+      const data = JSON.parse(bodyText) as unknown;
+      return { success: true, status, data };
+    } catch {
+      return { success: true, status, data: bodyText };
+    }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+    };
+  }
+}
+
 // Get team members for a specific team
 export async function getTeamMembersForTeam(
   accountId: string,
@@ -842,6 +946,84 @@ export async function removeTeamMemberForTeam(
         return {
           success: false,
           error: "凭据无效或已过期（HTTP 401/403）",
+          status,
+        };
+      }
+
+      let errorMessage = `HTTP ${status}`;
+      try {
+        const errorJson = JSON.parse(bodyText) as Record<string, unknown>;
+        const detail =
+          typeof errorJson.detail === "string" ? errorJson.detail : undefined;
+        const message =
+          typeof errorJson.message === "string" ? errorJson.message : undefined;
+        errorMessage = detail || message || errorMessage;
+      } catch {
+        errorMessage = bodyText.slice(0, 200) || errorMessage;
+      }
+
+      return {
+        success: false,
+        error: errorMessage,
+        status,
+      };
+    }
+
+    if (looksLikeCloudflareChallenge(bodyText)) {
+      return {
+        success: false,
+        error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+        requiresCookies: true,
+        status,
+      };
+    }
+
+    return {
+      success: true,
+      status,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "未知错误",
+    };
+  }
+}
+
+// 更新团队成员角色（用于降级 Owner 等场景）
+export async function updateTeamMemberRoleForTeam(
+  accountId: string,
+  accessToken: string,
+  memberId: string,
+  role: string,
+  cookies?: string
+): Promise<TeamMemberRoleUpdateResult> {
+  if (!accessToken || !accountId || !memberId || !role) {
+    return {
+      success: false,
+      error: "缺少 Access Token、Account ID、成员 ID 或角色",
+    };
+  }
+
+  const credentials: TeamCredentials = { accountId, accessToken, cookies };
+
+  try {
+    const url = `${CHATGPT_API_BASE}/accounts/${accountId}/users/${memberId}`;
+    const response = await fetch(url, {
+      method: "PATCH",
+      headers: getHeaders(credentials),
+      body: JSON.stringify({ role }),
+    });
+
+    const status = response.status;
+    const bodyText = await response.text();
+
+    if (!response.ok) {
+      if (looksLikeCloudflareChallenge(bodyText)) {
+        return {
+          success: false,
+          error: "Cloudflare 验证拦截。请为该团队配置 Cookies",
+          requiresCookies: true,
           status,
         };
       }

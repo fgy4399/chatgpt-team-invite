@@ -86,6 +86,10 @@ type TeamValidityState =
       planType?: string;
       seatsAvailable?: number;
       seatsUsed?: number;
+      seatsEntitled?: number;
+      willRenew?: boolean;
+      activeUntil?: string;
+      billingPeriod?: string;
       upstreamStatus?: number;
     }
   | {
@@ -105,7 +109,11 @@ type TeamStatusApiResponse = {
   subscription?: {
     seats_available?: number;
     seats_used?: number;
+    seats_entitled?: number;
     plan_type?: string;
+    active_until?: string;
+    billing_period?: string;
+    will_renew?: boolean;
   };
 };
 
@@ -137,6 +145,13 @@ export default function TeamsPage() {
   const [membersTotal, setMembersTotal] = useState<number | null>(null);
   const [kickSubmittingId, setKickSubmittingId] = useState<string | null>(null);
   const [kickError, setKickError] = useState("");
+  // 成员降级相关状态
+  const [demoteSubmittingIds, setDemoteSubmittingIds] = useState<
+    Record<string, boolean>
+  >({});
+  const [demoteAllLoading, setDemoteAllLoading] = useState(false);
+  const [demoteError, setDemoteError] = useState("");
+  const [demoteSuccess, setDemoteSuccess] = useState("");
   const membersFetchControllerRef = useRef<AbortController | null>(null);
 
   const [reservationsLoading, setReservationsLoading] = useState(false);
@@ -176,6 +191,9 @@ export default function TeamsPage() {
   const [syncingTeamIds, setSyncingTeamIds] = useState<Record<string, boolean>>(
     {}
   );
+  const [cancelRenewLoadingById, setCancelRenewLoadingById] = useState<
+    Record<string, boolean>
+  >({});
 
   const [teamValidityById, setTeamValidityById] = useState<
     Record<string, TeamValidityState>
@@ -183,6 +201,9 @@ export default function TeamsPage() {
 
   const getToken = () => localStorage.getItem("admin_token");
   const memberEmailSet = new Set(members.map((member) => member.email.toLowerCase()));
+  const ownerCount = members.filter((member) =>
+    member.role.toLowerCase().includes("owner")
+  ).length;
   const notJoinedReservationCount = reservations.filter(
     (item) => !memberEmailSet.has(item.email.toLowerCase())
   ).length;
@@ -309,6 +330,10 @@ export default function TeamsPage() {
               planType: sub.plan_type,
               seatsAvailable: sub.seats_available,
               seatsUsed: sub.seats_used,
+              seatsEntitled: sub.seats_entitled,
+              willRenew: sub.will_renew,
+              activeUntil: sub.active_until,
+              billingPeriod: sub.billing_period,
               upstreamStatus:
                 typeof data.upstreamStatus === "number"
                   ? data.upstreamStatus
@@ -349,6 +374,95 @@ export default function TeamsPage() {
     [router]
   );
 
+  const handleCancelRenew = async (team: Team) => {
+    const token = getToken();
+    if (!token) {
+      router.push("/admin");
+      return;
+    }
+
+    if (!confirm(`确定取消 ${team.name} 的自动续费吗？`)) {
+      return;
+    }
+
+    setCancelRenewLoadingById((prev) => ({ ...prev, [team.id]: true }));
+
+    try {
+      const res = await fetch(
+        `/api/admin/teams/${team.id}/subscription/cancel`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      if (res.status === 401) {
+        localStorage.removeItem("admin_token");
+        router.push("/admin");
+        return;
+      }
+
+      type CancelSubscriptionApiResponse = {
+        success?: boolean;
+        error?: string;
+        subscription?: {
+          plan_type?: string;
+          active_until?: string;
+          billing_period?: string;
+          will_renew?: boolean;
+          seats_available?: number;
+          seats_used?: number;
+        };
+      };
+
+      const data = (await res
+        .json()
+        .catch(() => ({}))) as Partial<CancelSubscriptionApiResponse>;
+
+      if (!res.ok || !data.success) {
+        alert(data.error || "取消自动续费失败");
+        return;
+      }
+
+      if (data.subscription) {
+        setTeamValidityById((prev) => {
+          const current = prev[team.id];
+          if (!current || current.state !== "ok") {
+            return prev;
+          }
+          return {
+            ...prev,
+            [team.id]: {
+              ...current,
+              planType: data.subscription?.plan_type ?? current.planType,
+              activeUntil: data.subscription?.active_until ?? current.activeUntil,
+              billingPeriod:
+                data.subscription?.billing_period ?? current.billingPeriod,
+              willRenew:
+                typeof data.subscription?.will_renew === "boolean"
+                  ? data.subscription?.will_renew
+                  : current.willRenew,
+              seatsAvailable:
+                typeof data.subscription?.seats_available === "number"
+                  ? data.subscription?.seats_available
+                  : current.seatsAvailable,
+              seatsUsed:
+                typeof data.subscription?.seats_used === "number"
+                  ? data.subscription?.seats_used
+                  : current.seatsUsed,
+            },
+          };
+        });
+      } else {
+        await checkTeamValidity(team);
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "取消自动续费失败");
+    } finally {
+      setCancelRenewLoadingById((prev) => ({ ...prev, [team.id]: false }));
+    }
+  };
+
   const closeMembersModal = useCallback(() => {
     membersFetchControllerRef.current?.abort();
     membersFetchControllerRef.current = null;
@@ -365,6 +479,10 @@ export default function TeamsPage() {
     setMembersTotal(null);
     setKickSubmittingId(null);
     setKickError("");
+    setDemoteSubmittingIds({});
+    setDemoteAllLoading(false);
+    setDemoteError("");
+    setDemoteSuccess("");
     setReservationsLoading(false);
     setReservationsError("");
     setReservations([]);
@@ -551,6 +669,8 @@ export default function TeamsPage() {
     setMembersLoading(true);
     setMembersError("");
     setKickError("");
+    setDemoteError("");
+    setDemoteSuccess("");
     setMembers([]);
     setMembersTotal(null);
 
@@ -1226,6 +1346,147 @@ export default function TeamsPage() {
     }
   };
 
+  // 批量或单个降级成员角色
+  const handleDemoteMembers = async (
+    memberIds: string[],
+    role: "account-admin" | "standard-user",
+    options?: { batch?: boolean }
+  ) => {
+    const team = membersModalTeam;
+    if (!team) return;
+
+    if (memberIds.length === 0) {
+      setDemoteError("没有可降级的成员");
+      return;
+    }
+
+    const token = getToken();
+    if (!token) {
+      router.push("/admin");
+      return;
+    }
+
+    setDemoteError("");
+    setDemoteSuccess("");
+
+    if (options?.batch) {
+      setDemoteAllLoading(true);
+    } else {
+      setDemoteSubmittingIds((prev) => {
+        const next = { ...prev };
+        memberIds.forEach((id) => {
+          next[id] = true;
+        });
+        return next;
+      });
+    }
+
+    try {
+      const res = await fetch(`/api/admin/teams/${team.id}/members/demote`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ memberIds, role }),
+      });
+
+      if (res.status === 401) {
+        localStorage.removeItem("admin_token");
+        router.push("/admin");
+        return;
+      }
+
+      type DemoteMembersApiResponse = {
+        success?: boolean;
+        role?: string;
+        updatedIds?: string[];
+        updatedCount?: number;
+        failed?: Array<{ memberId: string; error?: string }>;
+        error?: string;
+      };
+
+      const data = (await res
+        .json()
+        .catch(() => ({}))) as Partial<DemoteMembersApiResponse>;
+
+      if (!res.ok || !data.updatedIds) {
+        setDemoteError(data.error || "降级成员失败");
+        return;
+      }
+
+      const updatedIds = Array.isArray(data.updatedIds) ? data.updatedIds : [];
+      const failed = Array.isArray(data.failed) ? data.failed : [];
+
+      if (updatedIds.length > 0) {
+        setMembers((prev) =>
+          prev.map((item) =>
+            updatedIds.includes(item.id) ? { ...item, role } : item
+          )
+        );
+      }
+
+      const successCount =
+        typeof data.updatedCount === "number" ? data.updatedCount : updatedIds.length;
+      if (successCount > 0) {
+        setDemoteSuccess(`已降级 ${successCount} 名成员`);
+      }
+
+      if (failed.length > 0) {
+        const firstError = failed[0]?.error || "部分成员降级失败";
+        setDemoteError(firstError);
+      }
+    } catch (error) {
+      setDemoteError(error instanceof Error ? error.message : "降级成员失败");
+    } finally {
+      if (options?.batch) {
+        setDemoteAllLoading(false);
+      } else {
+        setDemoteSubmittingIds((prev) => {
+          const next = { ...prev };
+          memberIds.forEach((id) => {
+            delete next[id];
+          });
+          return next;
+        });
+      }
+    }
+  };
+
+  const handleDemoteMember = async (
+    member: TeamMember,
+    role: "account-admin" | "standard-user"
+  ) => {
+    if (!confirm(`确定将 ${member.email} 降级为 ${role === "account-admin" ? "管理员" : "成员"} 吗？`)) {
+      return;
+    }
+    await handleDemoteMembers([member.id], role);
+  };
+
+  // 一键降级当前团队内所有 Owner
+  const handleDemoteOwners = async (role: "account-admin" | "standard-user") => {
+    const ownerIds = members
+      .filter((member) => member.role.toLowerCase().includes("owner"))
+      .map((member) => member.id);
+
+    if (ownerIds.length === 0) {
+      setDemoteError("当前没有可降级的 Owner");
+      return;
+    }
+
+    if (
+      !confirm(
+        `确定将 ${ownerIds.length} 名 Owner 全部降级为 ${
+          role === "account-admin" ? "管理员" : "成员"
+        } 吗？`
+      )
+    ) {
+      return;
+    }
+
+    await handleDemoteMembers(ownerIds, role, { batch: true });
+  };
+
   const renderTeamValidity = (team: Team) => {
     const state = teamValidityById[team.id];
     if (!state || state.state === "idle") {
@@ -1248,6 +1509,8 @@ export default function TeamsPage() {
       const hasSeatInfo =
         typeof state.seatsUsed === "number" ||
         typeof state.seatsAvailable === "number";
+      const hasRenewInfo = typeof state.willRenew === "boolean";
+      const hasActiveUntil = typeof state.activeUntil === "string";
       return (
         <div className="flex flex-col gap-1">
           <span className="px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300 w-fit">
@@ -1256,6 +1519,25 @@ export default function TeamsPage() {
           {hasSeatInfo && (
             <span className="text-xs text-zinc-600 dark:text-zinc-300">
               已用 {state.seatsUsed ?? "-"} / 可用 {state.seatsAvailable ?? "-"}
+            </span>
+          )}
+          {hasRenewInfo && (
+            <span
+              className={`text-xs ${
+                state.willRenew
+                  ? "text-emerald-700 dark:text-emerald-300"
+                  : "text-amber-700 dark:text-amber-300"
+              }`}
+            >
+              {state.willRenew ? "自动续费" : "已取消续费"}
+            </span>
+          )}
+          {hasActiveUntil && (
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              到期 {new Date(state.activeUntil).toLocaleString("zh-CN", {
+                timeZone: "Asia/Shanghai",
+                hour12: false,
+              })}
             </span>
           )}
           {state.planType && (
@@ -1719,6 +2001,22 @@ export default function TeamsPage() {
                           检测
                         </button>
                         <button
+                          onClick={() => handleCancelRenew(team)}
+                          disabled={
+                            Boolean(cancelRenewLoadingById[team.id]) ||
+                            teamValidityById[team.id]?.state !== "ok" ||
+                            teamValidityById[team.id]?.willRenew !== true
+                          }
+                          className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-amber-700 hover:text-amber-900 hover:bg-white dark:text-amber-300 dark:hover:text-amber-200 dark:hover:bg-zinc-900/40 transition-colors disabled:opacity-50 whitespace-nowrap"
+                        >
+                          {cancelRenewLoadingById[team.id]
+                            ? "取消中..."
+                            : teamValidityById[team.id]?.state === "ok" &&
+                                teamValidityById[team.id]?.willRenew === false
+                              ? "已取消续费"
+                              : "取消续费"}
+                        </button>
+                        <button
                           onClick={() => handleViewMembers(team)}
                           className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-zinc-700 hover:text-zinc-900 hover:bg-white dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900/40 transition-colors whitespace-nowrap"
                         >
@@ -1763,6 +2061,7 @@ export default function TeamsPage() {
             <li>点击“邀请”可指定某个团队手动发送邀请邮件</li>
             <li>点击“对账”可对比真实成员与占位邀请，并按需释放占位</li>
             <li>点击“检测”可实时检查团队凭据有效性（可能受到 Cloudflare/限流影响）</li>
+            <li>检测后可显示订阅到期与续费状态，支持取消自动续费（到期前仍可使用）</li>
             <li>列表支持单个团队“同步”，必要时再用顶部“同步全部”</li>
             <li>禁用的团队不会接收新邀请</li>
           </ul>
@@ -2025,8 +2324,50 @@ export default function TeamsPage() {
                 </div>
               )}
 
+              {!membersLoading && !membersError && membersTab === "members" && demoteError && (
+                <div
+                  role="alert"
+                  className="mb-4 bg-red-50/80 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4"
+                >
+                  <div className="text-sm text-red-700 dark:text-red-300">
+                    {demoteError}
+                  </div>
+                </div>
+              )}
+
+              {!membersLoading && !membersError && membersTab === "members" && demoteSuccess && (
+                <div className="mb-4 bg-emerald-50/80 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4">
+                  <div className="text-sm text-emerald-700 dark:text-emerald-200">
+                    {demoteSuccess}
+                  </div>
+                </div>
+              )}
+
               {!membersLoading && !membersError && membersTab === "members" && (
                 <div className="rounded-xl border border-zinc-200/70 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/40 overflow-hidden">
+                  <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-zinc-200/70 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/50">
+                    <div className="text-sm text-zinc-600 dark:text-zinc-300">
+                      当前 Owner 数量：{ownerCount}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleDemoteOwners("account-admin")}
+                        disabled={demoteAllLoading || ownerCount === 0}
+                        className="inline-flex items-center px-3 py-1.5 rounded-lg border border-violet-200/70 dark:border-violet-500/30 bg-violet-50/80 dark:bg-violet-500/10 text-xs text-violet-700 dark:text-violet-200 hover:bg-violet-100 dark:hover:bg-violet-500/20 transition-colors disabled:opacity-60"
+                      >
+                        {demoteAllLoading ? "批量降级中..." : "一键降级为管理员"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDemoteOwners("standard-user")}
+                        disabled={demoteAllLoading || ownerCount === 0}
+                        className="inline-flex items-center px-3 py-1.5 rounded-lg border border-amber-200/70 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/10 text-xs text-amber-700 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors disabled:opacity-60"
+                      >
+                        {demoteAllLoading ? "批量降级中..." : "一键降级为成员"}
+                      </button>
+                    </div>
+                  </div>
                   <div className="max-h-[65vh] overflow-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-violet-50/70 dark:bg-violet-500/10 sticky top-0">
@@ -2055,6 +2396,7 @@ export default function TeamsPage() {
                         {members.map((member) => {
                           const isOwner = member.role.toLowerCase().includes("owner");
                           const isKicking = kickSubmittingId === member.id;
+                          const isDemoting = Boolean(demoteSubmittingIds[member.id]);
                           return (
                             <tr
                               key={member.id}
@@ -2078,14 +2420,32 @@ export default function TeamsPage() {
                                 {member.id}
                               </td>
                               <td className="px-4 py-3">
-                                <button
-                                  type="button"
-                                  disabled={isOwner || isKicking}
-                                  onClick={() => handleKickMember(member)}
-                                  className="inline-flex items-center px-3 py-1.5 rounded-lg border border-red-200/70 dark:border-red-500/30 bg-red-50/80 dark:bg-red-500/10 text-xs text-red-700 dark:text-red-200 hover:bg-red-100 dark:hover:bg-red-500/20 transition-colors disabled:opacity-60"
-                                >
-                                  {isOwner ? "不可移除" : isKicking ? "踢出中..." : "踢出"}
-                                </button>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={!isOwner || isDemoting || demoteAllLoading}
+                                    onClick={() => handleDemoteMember(member, "account-admin")}
+                                    className="inline-flex items-center px-3 py-1.5 rounded-lg border border-violet-200/70 dark:border-violet-500/30 bg-violet-50/80 dark:bg-violet-500/10 text-xs text-violet-700 dark:text-violet-200 hover:bg-violet-100 dark:hover:bg-violet-500/20 transition-colors disabled:opacity-60"
+                                  >
+                                    {isDemoting ? "降级中..." : "降级为管理员"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!isOwner || isDemoting || demoteAllLoading}
+                                    onClick={() => handleDemoteMember(member, "standard-user")}
+                                    className="inline-flex items-center px-3 py-1.5 rounded-lg border border-amber-200/70 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/10 text-xs text-amber-700 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors disabled:opacity-60"
+                                  >
+                                    {isDemoting ? "降级中..." : "降级为成员"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isOwner || isKicking || isDemoting || demoteAllLoading}
+                                    onClick={() => handleKickMember(member)}
+                                    className="inline-flex items-center px-3 py-1.5 rounded-lg border border-red-200/70 dark:border-red-500/30 bg-red-50/80 dark:bg-red-500/10 text-xs text-red-700 dark:text-red-200 hover:bg-red-100 dark:hover:bg-red-500/20 transition-colors disabled:opacity-60"
+                                  >
+                                    {isOwner ? "不可移除" : isKicking ? "踢出中..." : "踢出"}
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           );

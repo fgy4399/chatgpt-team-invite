@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getTokenFromRequest, verifyToken } from "@/lib/auth";
-import { getTeamSubscriptionForTeam } from "@/lib/chatgpt";
+import {
+  cancelTeamSubscriptionForTeam,
+  getTeamSubscriptionForTeam,
+} from "@/lib/chatgpt";
 import { logger } from "@/lib/logger";
 import { withTeamTokenRefresh } from "@/lib/teamAccessToken";
 
 export const runtime = "nodejs";
 
-// GET /api/admin/teams/[id]/status - 检测指定团队的远端有效性（不返回敏感凭据）
-export async function GET(
+// POST /api/admin/teams/[id]/subscription/cancel - 取消订阅自动续费
+export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -39,11 +42,6 @@ export async function GET(
         accountId: true,
         accessToken: true,
         cookies: true,
-        isActive: true,
-        expiresAt: true,
-        maxMembers: true,
-        currentMembers: true,
-        priority: true,
       },
     });
 
@@ -53,16 +51,25 @@ export async function GET(
 
     if (!team.cookies) {
       return NextResponse.json(
-        {
-          error: "团队未配置 Cookies，无法自动刷新 Access Token",
-          requiresCookies: true,
-        },
+        { error: "团队未配置 Cookies，无法自动刷新 Access Token" },
         { status: 400 }
       );
     }
 
-    const checkedAt = new Date();
-    const expired = team.expiresAt ? checkedAt > team.expiresAt : false;
+    const cancelResult = await withTeamTokenRefresh(team, (credentials) =>
+      cancelTeamSubscriptionForTeam(
+        credentials.accountId,
+        credentials.accessToken,
+        credentials.cookies
+      )
+    );
+
+    if (!cancelResult.success) {
+      return NextResponse.json(
+        { error: cancelResult.error || "取消自动续费失败" },
+        { status: cancelResult.status ?? 502 }
+      );
+    }
 
     const subscriptionResult = await withTeamTokenRefresh(team, (credentials) =>
       getTeamSubscriptionForTeam(
@@ -72,50 +79,27 @@ export async function GET(
       )
     );
 
-    const local = {
-      isActive: team.isActive,
-      expiresAt: team.expiresAt,
-      expired,
-      maxMembers: team.maxMembers,
-      currentMembers: team.currentMembers,
-      priority: team.priority,
-    };
+    const subscription = subscriptionResult.success
+      ? subscriptionResult.subscription || {}
+      : {};
 
-    if (!subscriptionResult.success) {
-      return NextResponse.json({
-        ok: false,
-        checkedAt: checkedAt.toISOString(),
-        teamId: team.id,
-        teamName: team.name,
-        local,
-        error: subscriptionResult.error || "检测失败",
-        requiresCookies: Boolean(subscriptionResult.requiresCookies),
-        upstreamStatus: subscriptionResult.status,
-      });
-    }
-
-    const subscription = subscriptionResult.subscription || {};
     return NextResponse.json({
-      ok: true,
-      checkedAt: checkedAt.toISOString(),
+      success: true,
       teamId: team.id,
       teamName: team.name,
-      local,
       subscription: {
-        seats_available: subscription.seats_available,
-        seats_used: subscription.seats_used,
-        seats_entitled: subscription.seats_entitled,
         plan_type: subscription.plan_type,
         active_until: subscription.active_until,
         billing_period: subscription.billing_period,
         will_renew: subscription.will_renew,
+        seats_available: subscription.seats_available,
+        seats_used: subscription.seats_used,
       },
-      upstreamStatus: subscriptionResult.status,
     });
   } catch (error) {
-    logger.error("Teams", "Check team status error:", error);
+    logger.error("Teams", "Cancel subscription error:", error);
     return NextResponse.json(
-      { error: "检测团队状态失败" },
+      { error: "取消自动续费失败" },
       { status: 500 }
     );
   }
