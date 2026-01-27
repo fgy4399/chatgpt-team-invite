@@ -2000,22 +2000,27 @@ export default function TeamsPage() {
                         >
                           检测
                         </button>
-                        <button
-                          onClick={() => handleCancelRenew(team)}
-                          disabled={
-                            Boolean(cancelRenewLoadingById[team.id]) ||
-                            teamValidityById[team.id]?.state !== "ok" ||
-                            teamValidityById[team.id]?.willRenew !== true
-                          }
+                        {(() => {
+                          const validity = teamValidityById[team.id];
+                          const canCancel =
+                            validity?.state === "ok" && validity.willRenew === true;
+                          return (
+                            <button
+                              onClick={() => handleCancelRenew(team)}
+                              disabled={
+                                Boolean(cancelRenewLoadingById[team.id]) || !canCancel
+                              }
                           className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-amber-700 hover:text-amber-900 hover:bg-white dark:text-amber-300 dark:hover:text-amber-200 dark:hover:bg-zinc-900/40 transition-colors disabled:opacity-50 whitespace-nowrap"
-                        >
-                          {cancelRenewLoadingById[team.id]
-                            ? "取消中..."
-                            : teamValidityById[team.id]?.state === "ok" &&
-                                teamValidityById[team.id]?.willRenew === false
-                              ? "已取消续费"
-                              : "取消续费"}
-                        </button>
+                            >
+                              {cancelRenewLoadingById[team.id]
+                                ? "取消中..."
+                                : validity?.state === "ok" &&
+                                    validity.willRenew === false
+                                  ? "已取消续费"
+                                  : "取消续费"}
+                            </button>
+                          );
+                        })()}
                         <button
                           onClick={() => handleViewMembers(team)}
                           className="inline-flex items-center px-3 py-1.5 rounded-xl text-sm text-zinc-700 hover:text-zinc-900 hover:bg-white dark:text-zinc-300 dark:hover:text-white dark:hover:bg-zinc-900/40 transition-colors whitespace-nowrap"
