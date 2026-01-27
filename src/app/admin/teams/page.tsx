@@ -1510,7 +1510,7 @@ export default function TeamsPage() {
         typeof state.seatsUsed === "number" ||
         typeof state.seatsAvailable === "number";
       const hasRenewInfo = typeof state.willRenew === "boolean";
-      const hasActiveUntil = typeof state.activeUntil === "string";
+      const activeUntil = state.activeUntil;
       return (
         <div className="flex flex-col gap-1">
           <span className="px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300 w-fit">
@@ -1532,9 +1532,9 @@ export default function TeamsPage() {
               {state.willRenew ? "自动续费" : "已取消续费"}
             </span>
           )}
-          {hasActiveUntil && (
+          {activeUntil && (
             <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              到期 {new Date(state.activeUntil).toLocaleString("zh-CN", {
+              到期 {new Date(activeUntil).toLocaleString("zh-CN", {
                 timeZone: "Asia/Shanghai",
                 hour12: false,
               })}
