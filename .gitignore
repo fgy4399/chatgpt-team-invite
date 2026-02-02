@@ -59,4 +59,5 @@ next-env.d.ts
 
 /src/generated/prisma
 .ace-tool/
+/.gemini-clipboard/
 .codex/

@@ -174,7 +174,6 @@ export async function POST(req: NextRequest) {
     }
 
     let teamId: string | null = null;
-    let inviteResult: { success: boolean; error?: string };
 
     // 多团队模式：仅使用后台团队配置
     const teamResult = await findAvailableTeam();
@@ -200,7 +199,7 @@ export async function POST(req: NextRequest) {
     reservedTeamId = team.id;
 
     // 使用团队凭据发送邀请（自动刷新 Access Token）
-    inviteResult = await withTeamTokenRefresh(team, (credentials) =>
+    const inviteResult = await withTeamTokenRefresh(team, (credentials) =>
       sendTeamInviteForTeam(email, {
         accountId: credentials.accountId,
         accessToken: credentials.accessToken,

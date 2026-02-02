@@ -133,6 +133,10 @@ export default function TeamsPage() {
     priority: 0,
   });
   const [editingTeam, setEditingTeam] = useState<EditTeam | null>(null);
+  const addTeamFormRef = useRef<HTMLDivElement | null>(null);
+  const editTeamFormRef = useRef<HTMLDivElement | null>(null);
+  const addTeamNameInputRef = useRef<HTMLInputElement | null>(null);
+  const editTeamNameInputRef = useRef<HTMLInputElement | null>(null);
 
   const [membersModalOpen, setMembersModalOpen] = useState(false);
   const [membersModalTeam, setMembersModalTeam] = useState<Team | null>(null);
@@ -752,6 +756,25 @@ export default function TeamsPage() {
     fetchTeams();
   }, [fetchTeams]);
 
+  useEffect(() => {
+    if (!showAddForm) return;
+
+    requestAnimationFrame(() => {
+      addTeamFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      addTeamNameInputRef.current?.focus();
+    });
+  }, [showAddForm]);
+
+  const editingTeamId = editingTeam?.id ?? null;
+  useEffect(() => {
+    if (!editingTeamId) return;
+
+    requestAnimationFrame(() => {
+      editTeamFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      editTeamNameInputRef.current?.focus();
+    });
+  }, [editingTeamId]);
+
   const handleSync = async () => {
     const token = getToken();
     if (!token) return;
@@ -831,6 +854,11 @@ export default function TeamsPage() {
     } finally {
       setSyncingTeamIds((prev) => ({ ...prev, [team.id]: false }));
     }
+  };
+
+  const handleOpenAddForm = () => {
+    setEditingTeam(null);
+    setShowAddForm(true);
   };
 
   const handleAddTeam = async (e: React.FormEvent) => {
@@ -1649,7 +1677,7 @@ export default function TeamsPage() {
               {syncing ? "同步中..." : "同步全部"}
             </button>
             <button
-              onClick={() => setShowAddForm(true)}
+              onClick={handleOpenAddForm}
               className="inline-flex items-center px-4 py-2.5 text-sm bg-orange-500 hover:bg-orange-600 text-white rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-zinc-900"
             >
               添加团队
@@ -1683,7 +1711,10 @@ export default function TeamsPage() {
 
         {/* Add Team Form */}
         {showAddForm && (
-          <div className="rounded-2xl border border-violet-200/60 dark:border-violet-500/20 bg-white/80 dark:bg-zinc-900/60 backdrop-blur shadow p-6 mb-8">
+          <div
+            ref={addTeamFormRef}
+            className="scroll-mt-28 rounded-2xl border border-violet-200/60 dark:border-violet-500/20 bg-white/80 dark:bg-zinc-900/60 backdrop-blur shadow p-6 mb-8"
+          >
             <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-1">添加新团队</h2>
             <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-5">
               配置账号凭据、名额上限与优先级；到期时间将自动获取
@@ -1695,6 +1726,8 @@ export default function TeamsPage() {
                     团队名称 *
                   </label>
                   <input
+                    ref={addTeamNameInputRef}
+                    autoFocus
                     type="text"
                     value={newTeam.name}
                     onChange={(e) => setNewTeam({ ...newTeam, name: e.target.value })}
@@ -1790,7 +1823,10 @@ export default function TeamsPage() {
 
         {/* Edit Team Form */}
         {editingTeam && (
-          <div className="rounded-2xl border border-violet-200/60 dark:border-violet-500/20 bg-white/80 dark:bg-zinc-900/60 backdrop-blur shadow p-6 mb-8">
+          <div
+            ref={editTeamFormRef}
+            className="scroll-mt-28 rounded-2xl border border-violet-200/60 dark:border-violet-500/20 bg-white/80 dark:bg-zinc-900/60 backdrop-blur shadow p-6 mb-8"
+          >
             <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-1">编辑团队</h2>
             <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-5">
               修改团队信息后会影响后续邀请分配与状态检测
@@ -1802,6 +1838,8 @@ export default function TeamsPage() {
                     团队名称 *
                   </label>
                   <input
+                    ref={editTeamNameInputRef}
+                    autoFocus
                     type="text"
                     value={editingTeam.name}
                     onChange={(e) => setEditingTeam({ ...editingTeam, name: e.target.value })}
